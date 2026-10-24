@@ -312,6 +312,7 @@ pub const Backend = struct {
     echoes: std.atomic.Value(u32) = .init(0),
     admitted: std.atomic.Value(u32) = .init(0),
     chunk_requests: std.atomic.Value(u32) = .init(0),
+    script_messages: std.atomic.Value(u32) = .init(0),
     requested_max_radius: std.atomic.Value(u32) = .init(0),
     requested_radius: std.atomic.Value(i32) = .init(0),
     spawns: std.atomic.Value(u32) = .init(0),
@@ -588,6 +589,12 @@ pub const Backend = struct {
             continue;
         }) {
             .text => try sendFrame(session, carrier, &.{packet.bytes}),
+            .script_message => {
+                const script = (try session.decodePacket(packet)).value.typed.script_message;
+                try std.testing.expectEqualStrings("suko:staff_rank", script.message_id);
+                try std.testing.expectEqualStrings("Moderator", script.message_value);
+                _ = self.script_messages.fetchAdd(1, .release);
+            },
             .player_action, .animate, .emote, .interact, .actor_pick_request, .command_request, .move_player => |kind| {
                 try self.record(packet.bytes);
                 if (kind == .command_request) _ = self.commands.fetchAdd(1, .release);

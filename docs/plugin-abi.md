@@ -191,7 +191,7 @@ Check `BIFROST_HOST_HAS(host, send_packet)` before calling
 managed mode, and is available from worker callbacks, task threads and plugin-owned threads after initialization.
 
 `bytes` is one complete packet with its canonical Bedrock header, at most 65536 bytes. Only Text in either
-direction and nonnegative RequestChunkRadius to the backend are supported. Both sub-client indices must be zero.
+direction, ScriptMessage to the backend and nonnegative RequestChunkRadius to the backend are supported. Both sub-client indices must be zero.
 Validation uses the managed session's `Current` protocol profile. Unsupported IDs, login/handshake/resource-pack
 packets and world/entity packets are refused. The supported packets contain no entity IDs to translate; backend
 radius injection also updates the radius Bifrost replays during transfers. Use protocol-zig to encode raw packets in Zig, or encode modified
@@ -399,7 +399,7 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
   takes the proxy with it.
 - Packet hooks, commands, messages and injection need managed mode. Passthrough only gets events, player
   information, networking snapshots and the transport-level disconnect.
-- Typed fields cover Text and RequestChunkRadius, and injection accepts only those two. Other packets are raw bytes.
+- Typed fields cover Text and RequestChunkRadius. Injection also accepts ScriptMessage to backends. Other packets are raw bytes.
 - Every hook, command or tracking capability that needs in-game batches turns off the opaque relay for that
   direction, and with more than one backend every batch is decoded anyway for transfers.
 - `run` callbacks share one pool of `[limits] plugin_task_threads` threads (128 tasks in total, 32 per plugin), so a blocking

@@ -326,7 +326,6 @@ pub fn sendDisconnect(self: *Managed, ends: Ends, reason: []const u8) !void {
 
 pub fn inject(self: *Managed, ends: Ends, target: abi.PacketTarget, packet: []const u8) !void {
     if (!self.inGame() or self.hold != null or self.syncing) return error.NotInGame;
-    // Only Text and RequestChunkRadius reach here; neither contains entity IDs.
     switch (target) {
         .player => try self.sendToPlayer(ends, &.{packet}),
         .backend => {

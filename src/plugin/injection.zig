@@ -11,12 +11,21 @@ pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
     if (packet.header.sender_subclient != 0 or packet.header.target_subclient != 0) return .unsupported;
     switch (protocol.Current.packetKind(packet.header.packet_id) orelse return .unsupported) {
         .text => {},
-        .request_chunk_radius => if (target != .backend) return .unsupported,
+        .request_chunk_radius, .script_message => if (target != .backend) return .unsupported,
         else => return .unsupported,
     }
     const decoded = protocol.Current.decodeBorrowed(bytes, limits) catch return .invalid_argument;
     if (decoded.value.typed == .request_chunk_radius and decoded.value.typed.request_chunk_radius.chunk_radius < 0) return .invalid_argument;
     return .ok;
+}
+
+test "script messages can only be injected into backends" {
+    const testing = @import("std").testing;
+    const script = [_]u8{ 0xb1, 1, 1, 'x', 1, 'y' };
+    try testing.expectEqual(abi.Status.ok, validate(.backend, &script));
+    try testing.expectEqual(abi.Status.unsupported, validate(.player, &script));
+    for (0..script.len) |len| try testing.expectEqual(abi.Status.invalid_argument, validate(.backend, script[0..len]));
+    try testing.expectEqual(abi.Status.invalid_argument, validate(.backend, &.{ 0xb1, 1, 255, 255, 255, 255, 15 }));
 }
 
 test "packet injection validates supported packets and truncated input" {
@@ -52,8 +61,8 @@ test "packet injection validates supported packets and truncated input" {
 test "native packet codec and injection fuzz round trips" {
     const std = @import("std");
     const Decoded = @import("Decoded.zig");
-    var buffers: [14][1028]u8 = undefined;
-    var corpus: [14][]const u8 = undefined;
+    var buffers: [15][1028]u8 = undefined;
+    var corpus: [15][]const u8 = undefined;
     for (&buffers, &corpus, 0..) |*buffer, *seed, tag| {
         const out = buffer[4..];
         const len = if (tag < 12) blk: {
@@ -67,7 +76,15 @@ test "native packet codec and injection fuzz round trips" {
                 else => {},
             }
             break :blk try Decoded.encode(.{ .packet_id = 9 }, .text, &text, out);
-        } else try Decoded.encode(.{ .packet_id = 69 }, .chunk_radius, &abi.ChunkRadius{ .radius = if (tag == 12) 8 else -1, .max_radius = 255 }, out);
+        } else if (tag < 14)
+            try Decoded.encode(.{ .packet_id = 69 }, .chunk_radius, &abi.ChunkRadius{ .radius = if (tag == 12) 8 else -1, .max_radius = 255 }, out)
+        else blk: {
+            var writer = protocol.Writer.init(out);
+            try writer.writeVarU32(protocol.Current.packetId(.script_message).?);
+            const script: protocol.packets.script_message.Packet = .{ .message_id = "suko:staff_rank", .message_value = "Moderator" };
+            try script.encode(&writer);
+            break :blk writer.written().len;
+        };
         std.mem.writeInt(u32, buffer[0..4], @intCast(len), .little);
         seed.* = buffer[0 .. 4 + len];
     }
@@ -81,6 +98,7 @@ test "native packet codec and injection fuzz round trips" {
                     try std.testing.expect(packet.header.sender_subclient == 0 and packet.header.target_subclient == 0);
                     switch (packet.value.typed) {
                         .text => {},
+                        .script_message => try std.testing.expect(target == .backend),
                         .request_chunk_radius => |radius| try std.testing.expect(target == .backend and radius.chunk_radius >= 0),
                         else => return error.UnsafeInjectionAccepted,
                     }

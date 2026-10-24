@@ -1082,7 +1082,7 @@ const Injector = struct {
 
     fn wait() !void {
         for (0..500) |_| {
-            if (completed.load(.acquire) == 3) return;
+            if (completed.load(.acquire) == 4) return;
             try io.sleep(.fromMilliseconds(10), .awake);
         }
         return error.WaitTimedOut;
@@ -1091,7 +1091,7 @@ const Injector = struct {
 
 fn injectPackets(rig: *Rig) !void {
     const host = Recorder.host.?;
-    var buffers: [3][128]u8 = undefined;
+    var buffers: [4][128]u8 = undefined;
     const messages = [_][]const u8{ "to player", "to backend" };
     for (messages, buffers[0..2], [_]abi.PacketTarget{ .player, .backend }) |message, *buffer, target| {
         const packet = try managed.typedPacket(buffer, .{ .text = .{
@@ -1106,6 +1106,11 @@ fn injectPackets(rig: *Rig) !void {
     }
     const radius = try managed.typedPacket(&buffers[2], .{ .request_chunk_radius = .{ .chunk_radius = 10, .max_chunk_radius = 11 } });
     try std.testing.expectEqual(abi.Status.ok, host.send_packet(host.context, Recorder.handle(), .backend, .of(radius), Injector.done, null));
+    const script = try managed.typedPacket(&buffers[3], .{ .script_message = .{
+        .message_id = "suko:staff_rank",
+        .message_value = "Moderator",
+    } });
+    try std.testing.expectEqual(abi.Status.ok, host.send_packet(host.context, Recorder.handle(), .backend, .of(script), Injector.done, null));
     var received: usize = 0;
     while (received < 3) {
         var packets = try rig.player.receive();
@@ -1153,6 +1158,7 @@ test "packet injection uses managed transport, skips listeners and preserves rad
     defer rig.deinit();
     try std.testing.expectEqual(@as(i32, @backingInt(abi.Status.too_late)), Injector.pregame.load(.acquire));
     try injectPackets(&rig);
+    try fixtures.waitFor(io, &rig.a.script_messages, 1);
     try std.testing.expectEqual(@as(u32, 0), Injector.from_player.load(.acquire));
     try std.testing.expectEqual(@as(u32, 1), Injector.from_backend.load(.acquire));
     try rig.transfer(1);
@@ -1164,6 +1170,7 @@ test "packet injection uses managed transport, skips listeners and preserves rad
     try std.testing.expectEqual(@as(u32, 11), rig.b.requested_max_radius.load(.acquire));
     Injector.completed.store(0, .release);
     try injectPackets(&rig);
+    try fixtures.waitFor(io, &rig.b.script_messages, 1);
     try std.testing.expectEqual(@as(u32, 0), Injector.from_player.load(.acquire));
     try std.testing.expectEqual(@as(u32, 2), Injector.from_backend.load(.acquire));
 }

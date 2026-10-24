@@ -416,9 +416,8 @@ typedef struct bifrost_host {
     bifrost_status (*decode_packet)(void *context, const bifrost_packet *packet, bifrost_packet_type type, void *out, size_t capacity) BIFROST_NOEXCEPT;
     /* Writes replacement and replacement_len; return BIFROST_PACKET_REPLACE to apply it. */
     bifrost_status (*encode_packet)(void *context, bifrost_packet *packet, bifrost_packet_type type, const void *data, size_t size) BIFROST_NOEXCEPT;
-    /* Copies a complete Bedrock packet. OK means queued; optional done reports delivery.
-       Thread-safe, bypasses listeners. Text in either direction; RequestChunkRadius to backend.
-       In-game only, main sub-client only, <= 65536 bytes. Check BIFROST_HOST_HAS first. */
+    /* Check BIFROST_HOST_HAS before queuing a copy from any thread, with optional delivery through done and no listener calls.
+       Supports Text to either target and ScriptMessage or RequestChunkRadius to backends, in game on main sub-clients up to 65536 bytes. */
     bifrost_status (*send_packet)(void *context, bifrost_player player, bifrost_packet_target target, bifrost_str bytes, bifrost_task_done_fn done, void *user) BIFROST_NOEXCEPT;
     bifrost_status (*player_info)(void *context, bifrost_player player, bifrost_player_info *out, size_t capacity) BIFROST_NOEXCEPT;
     bifrost_status (*network_stats)(void *context, bifrost_player player, bifrost_packet_target target, bifrost_network_stats *out, size_t capacity) BIFROST_NOEXCEPT;

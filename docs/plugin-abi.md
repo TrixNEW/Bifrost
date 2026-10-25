@@ -413,7 +413,7 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
 
 - `BIFROST_ABI_VERSION` changes only for a breaking change. Each side checks the other's `abi_version` and refuses
   a mismatch: Bifrost returns an error for the plugin, a plugin should return `INCOMPATIBLE`.
-- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 4. It is not a host negotiation
+- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 5. It is not a host negotiation
   field; use `BIFROST_HOST_HAS` for each optional function. Keep the host pointer rather than copying a newer
   header's entire table from an older host. New player/network snapshot layouts are fixed in v1.
 - `bifrost_host` only grows at the end. A plugin must not compare `host->struct_size` with its own
@@ -467,3 +467,20 @@ The admission owner may call `resume_login` from any thread. It queues work on
 the player's worker and optionally reports completion. A stale handle cannot
 resume another connection. Repeated resumes report `TOO_LATE`. Admission tasks
 use the existing task pool and shutdown rules.
+
+
+## Backend health
+
+API revision 5 adds `backend_health(player, backend, out)` and the Zig wrapper
+`Host.backendHealth`. Check the host field before use. An `EVENTS` plugin calls
+it on the player's worker, including from a posted callback. It copies Bifrost's
+cached routing health and never performs a probe or allocates memory.
+
+The states are `UNKNOWN`, `HEALTHY` and `UNHEALTHY`. Unknown means no monitor is
+attached or no check has completed. Healthy means the signaling endpoint last
+answered successfully. It does not imply that the backend is joinable or that
+its whitelist is disabled. Counts and backend gameplay state remain separate.
+
+Invalid indices or null outputs return `INVALID_ARGUMENT`, an expired player
+returns `STALE_HANDLE`, and another worker or a plugin thread gets `WRONG_THREAD`.
+Older hosts return `Unsupported` through the Zig wrapper.

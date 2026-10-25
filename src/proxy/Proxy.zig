@@ -266,6 +266,20 @@ fn routeNetwork(context: *anyopaque, link_id: u64, target: abi.PacketTarget, out
 
 fn routeGameplay(context: *anyopaque, link_id: u64, query: Handles.Query) abi.Status {
     const self: *Proxy = @ptrCast(@alignCast(context));
+    if (query == .backend_health) {
+        const request = query.backend_health;
+        if (request.backend >= self.router.backends.len) return .invalid_argument;
+        request.out.* = .unknown;
+        if (self.router.health) |health| {
+            if (request.backend >= health.backends.len) return .invalid_argument;
+            request.out.* = switch (health.status(.of(request.backend))) {
+                .unknown => .unknown,
+                .healthy => .healthy,
+                .unhealthy => .unhealthy,
+            };
+        }
+        return .ok;
+    }
     const link = self.findLink(link_id) orelse return .too_late;
     if (query == .login_hints) {
         const managed = link.managed orelse return .unsupported;

@@ -11,7 +11,7 @@ pub const max_manifest_bytes = 4096;
 pub const ManifestFn = *const fn (out: ?*Str) callconv(.c) Status;
 pub const no_backend: u32 = std.math.maxInt(u32);
 pub const no_worker: u32 = std.math.maxInt(u32);
-pub const api_revision: u32 = 4;
+pub const api_revision: u32 = 5;
 
 pub const ConnectionState = enum(u32) { connected, closing, disconnected, _ };
 pub const AuthenticationState = enum(u32) { pending, authenticated, disabled, unavailable, rejected, _ };
@@ -369,6 +369,8 @@ pub const TaskResult = extern struct {
 
 pub const TaskDoneFn = *const fn (user: ?*anyopaque, result: *const TaskResult) callconv(.c) void;
 
+pub const BackendHealth = enum(u32) { unknown, healthy, unhealthy, _ };
+
 pub const PacketTarget = enum(u32) { player, backend, _ };
 
 pub const EventFn = *const fn (user: ?*anyopaque, event: *const Event, decision: ?*TransferDecision) callconv(.c) void;
@@ -408,6 +410,8 @@ pub const Host = extern struct {
 
     resume_login: *const fn (context: *anyopaque, player: Player, done: ?TaskDoneFn, user: ?*anyopaque) callconv(.c) Status,
     login_hints: *const fn (context: *anyopaque, player: Player, out: ?*LoginHints, capacity: usize) callconv(.c) Status,
+
+    backend_health: *const fn (context: *anyopaque, player: Player, backend: u32, out: ?*BackendHealth) callconv(.c) Status,
 
     pub fn has(self: *const Host, comptime field: std.meta.FieldEnum(Host)) bool {
         const name = @tagName(field);

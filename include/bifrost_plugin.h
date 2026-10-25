@@ -14,7 +14,7 @@ extern "C" {
    The full contract is in docs/plugin-abi.md. */
 
 #define BIFROST_ABI_VERSION 1u
-#define BIFROST_API_REVISION 4u
+#define BIFROST_API_REVISION 5u
 #define BIFROST_NO_BACKEND UINT32_MAX
 #define BIFROST_NO_WORKER UINT32_MAX
 
@@ -397,6 +397,13 @@ typedef uint32_t bifrost_packet_target;
 
 typedef void (*bifrost_event_fn)(void *user, const bifrost_event *event, bifrost_transfer_decision *decision) BIFROST_NOEXCEPT;
 
+typedef uint32_t bifrost_backend_health;
+enum {
+    BIFROST_BACKEND_UNKNOWN = 0,
+    BIFROST_BACKEND_HEALTHY = 1,
+    BIFROST_BACKEND_UNHEALTHY = 2,
+};
+
 typedef struct bifrost_host {
     uint32_t struct_size;
     uint32_t abi_version;
@@ -437,6 +444,7 @@ typedef struct bifrost_host {
     bifrost_status (*list_entities)(void *context, bifrost_player player, bifrost_entity *out, size_t count, size_t *total, uint32_t *complete) BIFROST_NOEXCEPT;
     bifrost_status (*resume_login)(void *context, bifrost_player player, bifrost_task_done_fn done, void *user) BIFROST_NOEXCEPT;
     bifrost_status (*login_hints)(void *context, bifrost_player player, bifrost_login_hints *out, size_t capacity) BIFROST_NOEXCEPT;
+    bifrost_status (*backend_health)(void *context, bifrost_player player, uint32_t backend, bifrost_backend_health *out) BIFROST_NOEXCEPT;
 } bifrost_host;
 
 /* Older hosts have a shorter table, so use this instead of sizeof */

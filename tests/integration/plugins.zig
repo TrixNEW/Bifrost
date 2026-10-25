@@ -458,6 +458,8 @@ test "the C header matches the Zig ABI" {
     }
     try expectConstants(abi.Status, "BIFROST_STATUS_");
     try expectConstants(abi.LogLevel, "BIFROST_LOG_");
+    try expectConstants(abi.BackendHealth, "BIFROST_BACKEND_");
+    try std.testing.expectEqual(@sizeOf(abi.BackendHealth), @sizeOf(header.bifrost_backend_health));
     try expectConstants(abi.EventKind, "BIFROST_EVENT_");
     try expectConstants(abi.TransferFailure, "BIFROST_FAILURE_");
     try expectConstants(abi.TransferAction, "BIFROST_TRANSFER_");
@@ -1757,4 +1759,67 @@ test "admission plugins require managed sessions" {
     config.session_mode = .passthrough;
     var running: fixtures.Running = undefined;
     try std.testing.expectError(error.AdmissionRequiresManaged, running.start(io, config, .{ .plugins = &plugins }));
+}
+
+test "backend health exposes the routing cache without probing from callbacks" {
+    const HealthPlugin = struct {
+        var api: *const abi.Host = undefined;
+        var player: std.atomic.Value(u64) = .init(0);
+        var status: std.atomic.Value(i32) = .init(-100);
+        var value: abi.BackendHealth = .unknown;
+        fn init(host: *const abi.Host, plugin: *abi.Plugin) callconv(.c) abi.Status {
+            api = host;
+            plugin.name = .of("health-query");
+            plugin.plugin_version = .of("1");
+            plugin.capabilities = .{ .events = true };
+            return host.subscribe(host.context, .player_connected, connected, null);
+        }
+        fn connected(_: ?*anyopaque, event: *const abi.Event, _: ?*abi.TransferDecision) callconv(.c) void {
+            inspect(event.player);
+            player.store(event.player.id, .release);
+        }
+        fn inspect(handle: abi.Player) void {
+            const result = api.backend_health(api.context, handle, 0, &value);
+            status.store(@backingInt(result), .release);
+        }
+        fn posted(_: ?*anyopaque, result: *const abi.TaskResult) callconv(.c) void {
+            inspect(result.player);
+        }
+        fn awaitStatus() !void {
+            for (0..500) |_| {
+                if (status.load(.acquire) != -100) return;
+                try io.sleep(.fromMilliseconds(10), .awake);
+            }
+            return error.Timeout;
+        }
+    };
+    var backend: fixtures.Backend = undefined;
+    try backend.start(io, .{});
+    defer backend.deinit();
+    const config = try fixtures.config(&.{backend.address()});
+    var health: bifrost.Health = .init(config.backends(), 1000, 500);
+    for (0..3) |mode| {
+        if (mode == 1) try health.checkAll(io);
+        HealthPlugin.player.store(0, .release);
+        HealthPlugin.status.store(-100, .release);
+        var plugins = try bifrost.Plugins.init(gpa, config.backends(), .{});
+        defer plugins.deinit();
+        try plugins.add(HealthPlugin.init, null);
+        var running: fixtures.Running = undefined;
+        try running.start(io, config, .{ .plugins = &plugins, .health = if (mode == 2) null else &health });
+        defer running.deinit();
+        var player = try fixtures.Player.connect(io, running.address());
+        defer player.deinit();
+        try player.roundTrip("health-query");
+        try HealthPlugin.awaitStatus();
+        try std.testing.expectEqual(@backingInt(abi.Status.ok), HealthPlugin.status.load(.acquire));
+        try std.testing.expectEqual(if (mode == 1) abi.BackendHealth.healthy else .unknown, HealthPlugin.value);
+        if (mode == 1) {
+            health.markFailed(.of(0));
+            HealthPlugin.status.store(-100, .release);
+            try std.testing.expectEqual(abi.Status.ok, HealthPlugin.api.post(HealthPlugin.api.context, .{ .id = HealthPlugin.player.load(.acquire) }, HealthPlugin.posted, null));
+            try HealthPlugin.awaitStatus();
+            try std.testing.expectEqual(abi.BackendHealth.unhealthy, HealthPlugin.value);
+        }
+    }
 }

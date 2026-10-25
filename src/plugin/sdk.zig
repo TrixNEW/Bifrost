@@ -193,6 +193,13 @@ pub const Host = struct {
         return self.raw.backend_count(self.raw.context);
     }
 
+    pub fn backendHealth(self: Host, player: Player, backend: u32) Error!abi.BackendHealth {
+        if (!self.raw.has(.backend_health)) return error.Unsupported;
+        var health: abi.BackendHealth = .unknown;
+        try check(self.raw.backend_health(self.raw.context, player, backend, &health));
+        return health;
+    }
+
     pub fn backendName(self: Host, backend: u32) Error![]const u8 {
         var name: abi.Str = .{};
         try check(self.raw.backend_name(self.raw.context, backend, &name));

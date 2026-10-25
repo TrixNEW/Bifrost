@@ -632,6 +632,7 @@ fn hostFor(loaded: *Loaded) abi.Host {
         .list_entities = hostListEntities,
         .resume_login = hostResumeLogin,
         .login_hints = hostLoginHints,
+        .backend_health = hostBackendHealth,
     };
 }
 
@@ -844,6 +845,13 @@ fn hostBackendName(context: *anyopaque, backend: u32, name: ?*abi.Str) callconv(
     if (backend >= backends.len) return .invalid_argument;
     (name orelse return .invalid_argument).* = .of(backends[backend].name());
     return .ok;
+}
+
+fn hostBackendHealth(context: *anyopaque, player: abi.Player, backend: u32, out: ?*abi.BackendHealth) callconv(.c) abi.Status {
+    const result = out orelse return .invalid_argument;
+    const loaded = from(context);
+    if (backend >= loaded.owner.backends.len) return .invalid_argument;
+    return gameplayQuery(loaded, .events, player, .{ .backend_health = .{ .backend = backend, .out = result } });
 }
 
 fn hostPlayerName(context: *anyopaque, player: abi.Player, out: ?[*]u8, capacity: usize, len: ?*usize) callconv(.c) abi.Status {
@@ -2232,6 +2240,7 @@ test "an SDK plugin loads on hosts older than its header and refuses ones older 
     try testing.expectError(error.Unsupported, old_sdk.decodePacket(&packet, abi.Text));
     try testing.expectError(error.Unsupported, old_sdk.encodePacket(&packet, abi.Text{}));
     try testing.expectError(error.Unsupported, old_sdk.playerInfo(.{}));
+    try testing.expectError(error.Unsupported, old_sdk.backendHealth(.{}, 0));
     try testing.expectError(error.Unsupported, old_sdk.networkStats(.{}, .player));
     try testing.expectError(error.Unsupported, old_sdk.disconnect(.{}, "", null, null));
     try testing.expectError(error.Unsupported, old_sdk.requestTransfer(.{}, 0, null, null));
@@ -2440,4 +2449,43 @@ test "posts from plugin threads racing unload are each settled once before shutd
     const delivery = &Poster.delivery;
     try testing.expectEqual(Poster.accepted.load(.acquire), delivery.ok.load(.acquire) + delivery.stale.load(.acquire));
     try testing.expectEqual(@as(u32, 0), delivery.misplaced.load(.acquire));
+}
+
+test "backend health queries validate indices and stay on the player's worker" {
+    const QueryProbe = struct {
+        api: *const abi.Host,
+        other: abi.Player,
+        calls: usize = 0,
+        failed: bool = false,
+        fn query(_: *anyopaque, _: u64, request: Handles.Query) abi.Status {
+            if (request != .backend_health) return .unsupported;
+            request.backend_health.out.* = .healthy;
+            return .ok;
+        }
+        fn done(raw: ?*anyopaque, result: *const abi.TaskResult) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw.?));
+            var health: abi.BackendHealth = .unknown;
+            if (result.status != .ok or self.api.backend_health(self.api.context, result.player, 0, &health) != .ok or health != .healthy) self.failed = true;
+            if (self.api.backend_health(self.api.context, self.other, 0, &health) != .wrong_thread) self.failed = true;
+            self.calls += 1;
+        }
+    };
+    const backends = [_]Backend{try .init("hub", .{ .ip4 = .loopback(19132) })};
+    var plugins = try Plugins.init(testing.allocator, &backends, .{ .workers = 2 });
+    defer plugins.deinit();
+    try plugins.add(Probe.first, null);
+    const api = Probe.seen_host.?;
+    const first = try plugins.handles.acquire(testing.allocator, .{ .context = &plugins, .worker = 0, .link = 1, .transfer = routedTransfer, .gameplay = QueryProbe.query });
+    const other = try plugins.handles.acquire(testing.allocator, .{ .context = &plugins, .worker = 1, .link = 2, .transfer = routedTransfer, .gameplay = QueryProbe.query });
+    var state: QueryProbe = .{ .api = &api, .other = other };
+    var health: abi.BackendHealth = .unknown;
+    try testing.expectEqual(abi.Status.wrong_thread, api.backend_health(api.context, first, 0, &health));
+    try testing.expectEqual(abi.Status.invalid_argument, api.backend_health(api.context, first, 1, &health));
+    try testing.expectEqual(abi.Status.invalid_argument, api.backend_health(api.context, first, 0, null));
+    try testing.expectEqual(abi.Status.ok, api.post(api.context, first, QueryProbe.done, &state));
+    plugins.drain(0, testing.io, null);
+    try testing.expect(!state.failed);
+    try testing.expectEqual(@as(usize, 1), state.calls);
+    plugins.handles.release(first);
+    try testing.expectEqual(abi.Status.stale_handle, api.backend_health(api.context, first, 0, &health));
 }

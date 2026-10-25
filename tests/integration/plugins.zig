@@ -443,6 +443,7 @@ test "the C header matches the Zig ABI" {
         .{ abi.CommandInfo, header.bifrost_command_info },
         .{ abi.PlayerState, header.bifrost_player_state },
         .{ abi.PlayerInfo, header.bifrost_player_info },
+        .{ abi.LoginHints, header.bifrost_login_hints },
         .{ abi.NetworkStats, header.bifrost_network_stats },
         .{ abi.Vec3, header.bifrost_vec3 },
         .{ abi.Attribute, header.bifrost_attribute },
@@ -494,7 +495,7 @@ test "the C header matches the Zig ABI" {
         try std.testing.expectEqual(@as(u64, @bitCast(capability)), @field(header, name));
     }
     try std.testing.expectEqual(@as(u64, @bitCast(abi.Capabilities.supported)), header.BIFROST_CAPABILITY_EVENTS | header.BIFROST_CAPABILITY_COMMANDS |
-        header.BIFROST_CAPABILITY_PACKETS | header.BIFROST_CAPABILITY_TASKS | header.BIFROST_CAPABILITY_GAMEPLAY | header.BIFROST_CAPABILITY_ENTITIES);
+        header.BIFROST_CAPABILITY_PACKETS | header.BIFROST_CAPABILITY_TASKS | header.BIFROST_CAPABILITY_GAMEPLAY | header.BIFROST_CAPABILITY_ENTITIES | header.BIFROST_CAPABILITY_ADMISSION);
 }
 
 fn expectFlags(comptime Flags: type, comptime prefix: []const u8) !void {
@@ -1637,4 +1638,123 @@ test "native libraries unload completely between startup and shutdown cycles" {
     }
     const name = std.fs.path.basename(path);
     try files.tmp.dir.deleteFile(io, name);
+}
+
+const AdmissionPlugin = struct {
+    var host: *const abi.Host = undefined;
+    var player: std.atomic.Value(u64) = .init(0);
+    var connected: std.atomic.Value(u64) = .init(0);
+    var completion: std.atomic.Value(i32) = .init(999);
+    var hint_status: abi.Status = .failed;
+    var reject: bool = false;
+    fn init(api: *const abi.Host, plugin: *abi.Plugin) callconv(.c) abi.Status {
+        host = api;
+        plugin.name = .of("admission");
+        plugin.plugin_version = .of("1");
+        plugin.capabilities = .{ .events = true, .admission = true };
+        const status = api.subscribe(api.context, .player_connected, joined, null);
+        if (status != .ok) return status;
+        return api.subscribe(api.context, .player_authenticated, verified, null);
+    }
+    fn second(api: *const abi.Host, plugin: *abi.Plugin) callconv(.c) abi.Status {
+        const status = init(api, plugin);
+        plugin.name = .of("second-admission");
+        return status;
+    }
+    fn joined(_: ?*anyopaque, event: *const abi.Event, _: ?*abi.TransferDecision) callconv(.c) void {
+        connected.store(event.player.id, .release);
+    }
+    fn completed(_: ?*anyopaque, result: *const abi.TaskResult) callconv(.c) void {
+        completion.store(@backingInt(result.status), .release);
+    }
+    fn verified(_: ?*anyopaque, event: *const abi.Event, decision: ?*abi.TransferDecision) callconv(.c) void {
+        var hints: abi.LoginHints = .{};
+        hint_status = host.login_hints(host.context, event.player, &hints, @sizeOf(abi.LoginHints));
+        decision.?.action = if (reject) .cancel else .hold_login;
+        player.store(event.player.id, .release);
+    }
+};
+
+test "admission holds verified logins before the backend and resumes on the owning worker" {
+    AdmissionPlugin.connected.store(0, .release);
+    AdmissionPlugin.completion.store(999, .release);
+    AdmissionPlugin.player.store(0, .release);
+    AdmissionPlugin.reject = false;
+    var plugins = try bifrost.Plugins.init(gpa, &.{}, .{});
+    defer plugins.deinit();
+    try plugins.add(AdmissionPlugin.init, null);
+    const host = AdmissionPlugin.host;
+    try std.testing.expectError(error.DuplicateAdmission, plugins.add(AdmissionPlugin.second, null));
+    AdmissionPlugin.host = host;
+    const proxy_key = try managed.proxyKey(1);
+    var keys = try managed.keySet();
+    defer keys.deinit();
+    var backend: managed.Backend = undefined;
+    try backend.start(io, proxy_key.public_key);
+    defer backend.deinit();
+    var running: fixtures.Running = undefined;
+    try running.start(io, try managed.config(&.{backend.address()}), .{ .plugins = &plugins, .proxy_key = proxy_key, .auth = .{ .verify = &keys } });
+    defer running.deinit();
+    const player = try managed.Player.connect(io, running.address(), 2);
+    defer player.destroy();
+    for (0..500) |_| {
+        if (AdmissionPlugin.connected.load(.acquire) != 0) break;
+        try io.sleep(.fromMilliseconds(10), .awake);
+    }
+    const early: abi.Player = .{ .id = AdmissionPlugin.connected.load(.acquire) };
+    try std.testing.expect(early.id != 0);
+    try std.testing.expectEqual(abi.Status.ok, host.resume_login(host.context, early, AdmissionPlugin.completed, null));
+    for (0..500) |_| {
+        if (AdmissionPlugin.completion.load(.acquire) != 999) break;
+        try io.sleep(.fromMilliseconds(10), .awake);
+    }
+    try std.testing.expectEqual(@backingInt(abi.Status.too_late), AdmissionPlugin.completion.load(.acquire));
+    try player.settings(@intCast(bedwire.protocol.Current.protocol_number));
+    try player.sendLogin("Steve", "2535400000000001", player.key);
+    for (0..500) |_| {
+        if (AdmissionPlugin.player.load(.acquire) != 0) break;
+        try io.sleep(.fromMilliseconds(10), .awake);
+    }
+    const handle: abi.Player = .{ .id = AdmissionPlugin.player.load(.acquire) };
+    try std.testing.expect(handle.id != 0);
+    try std.testing.expectEqual(abi.Status.ok, AdmissionPlugin.hint_status);
+    try std.testing.expectEqual(@as(u32, 0), backend.logins.load(.acquire));
+    try std.testing.expectEqual(abi.Status.ok, host.resume_login(host.context, handle, null, null));
+    try player.awaitLoginStatus();
+    try player.spawn();
+    try player.echo("admitted");
+    try std.testing.expectEqual(@as(u32, 1), backend.logins.load(.acquire));
+}
+
+test "admission rejection never sends a login upstream" {
+    AdmissionPlugin.player.store(0, .release);
+    AdmissionPlugin.reject = true;
+    var plugins = try bifrost.Plugins.init(gpa, &.{}, .{});
+    defer plugins.deinit();
+    try plugins.add(AdmissionPlugin.init, null);
+    const proxy_key = try managed.proxyKey(1);
+    var keys = try managed.keySet();
+    defer keys.deinit();
+    var backend: managed.Backend = undefined;
+    try backend.start(io, proxy_key.public_key);
+    defer backend.deinit();
+    var running: fixtures.Running = undefined;
+    try running.start(io, try managed.config(&.{backend.address()}), .{ .plugins = &plugins, .proxy_key = proxy_key, .auth = .{ .verify = &keys } });
+    defer running.deinit();
+    const player = try managed.Player.connect(io, running.address(), 2);
+    defer player.destroy();
+    try player.settings(@intCast(bedwire.protocol.Current.protocol_number));
+    try player.sendLogin("Steve", "2535400000000001", player.key);
+    try player.awaitClosed();
+    try std.testing.expectEqual(@as(u32, 0), backend.logins.load(.acquire));
+}
+
+test "admission plugins require managed sessions" {
+    var plugins = try bifrost.Plugins.init(gpa, &.{}, .{});
+    defer plugins.deinit();
+    try plugins.add(AdmissionPlugin.init, null);
+    var config = try managed.config(&.{try std.Io.net.IpAddress.parseLiteral("127.0.0.1:19132")});
+    config.session_mode = .passthrough;
+    var running: fixtures.Running = undefined;
+    try std.testing.expectError(error.AdmissionRequiresManaged, running.start(io, config, .{ .plugins = &plugins }));
 }

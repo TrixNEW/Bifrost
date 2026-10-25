@@ -111,6 +111,7 @@ pub fn create(env: *const Env, connection: *NetherNet.Connection, address: std.I
         .managed = managed,
         .stage_since_ms = nowMs(env.io),
     };
+    if (managed) |m| m.admission_pending = if (env.events.plugins) |plugins| plugins.admission != null else false;
     return self;
 }
 
@@ -189,6 +190,17 @@ pub fn forwardToBackend(self: *Link, message: NetherNet.Message) !void {
     } else if (self.dial_task != null) {
         try self.pending.push(self.env.gpa, payload);
     } else return error.BackendClosed;
+}
+
+pub fn resumeLogin(self: *Link) abi.Status {
+    const managed = self.managed orelse return .unsupported;
+    if (self.session == null) return .stale_handle;
+    if (!self.announced or managed.identity == null or !managed.admission_pending) return .too_late;
+    managed.admission_pending = false;
+    if (managed.player_phase == .ready and managed.upstream.phase == .waiting_for_login) {
+        managed.loginUpstream(&managed.upstream, managed.upstreamContext(self.ends(), if (self.backend) |*backend| backend else return .too_late)) catch return .failed;
+    }
+    return .ok;
 }
 
 pub fn sendMessage(self: *Link, text: []const u8) !void {
@@ -312,7 +324,14 @@ pub fn sendPacket(self: *Link, target: abi.PacketTarget, bytes: []const u8) abi.
 fn announce(self: *Link, identity: bedwire.Identity) void {
     self.announced = true;
     self.published = self.playerState();
-    self.env.events.authenticated(self.player, identity.display_name, identity.xuid, identity.uuid, identity.online, self.published);
+    const decision = self.env.events.authenticated(self.player, identity.display_name, identity.xuid, identity.uuid, identity.online, self.published);
+    if (decision.action == .cancel) {
+        _ = self.disconnect("Login rejected");
+        return;
+    }
+    if (decision.action != .hold_login) {
+        _ = self.resumeLogin();
+    }
 }
 
 fn playerGone(self: *Link) void {

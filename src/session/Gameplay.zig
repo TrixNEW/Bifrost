@@ -201,6 +201,7 @@ pub fn gameMode(player_mode: i32, world_mode: i32) ?i32 {
 
 pub fn answer(self: *const Gameplay, query: Query, now_ms: u64, effects: anytype) abi.Status {
     switch (query) {
+        .login_hints => return .unsupported,
         .player => |out| {
             out.* = self.state;
             out.struct_size = @sizeOf(abi.Gameplay);

@@ -94,6 +94,7 @@ const PendingCommand = struct {
 };
 
 const Subscriber = struct {
+    loaded: ?*Loaded = null,
     callback: abi.EventFn,
     user: ?*anyopaque,
 };
@@ -141,6 +142,7 @@ messages: std.atomic.Value(u32) = .init(0),
 injection_bytes: std.atomic.Value(u32) = .init(0),
 // Set while plugins load, before any worker reads it
 tracking: Tracking = .{},
+admission: ?*Loaded = null,
 
 pub fn init(gpa: std.mem.Allocator, backends: []const Backend, options: Options) !Plugins {
     if (options.task_threads == 0 or options.task_threads > Pool.max_threads) return error.InvalidOptions;
@@ -250,6 +252,8 @@ pub fn load(self: *Plugins, entry: abi.InitFn, library: ?Library, manifest: ?*co
         return error.UnsupportedCapability;
     }
     const caps = plugin.capabilities;
+    if (caps.admission and self.admission != null) return error.DuplicateAdmission;
+    if (caps.admission and !caps.events) return error.UndeclaredCapability;
     const undeclared: ?[]const u8 = if (self.pending.items.len != 0 and !caps.events)
         "EVENTS"
     else if (self.pending_packets.items.len != 0 and !caps.packets)
@@ -282,6 +286,7 @@ pub fn load(self: *Plugins, entry: abi.InitFn, library: ?Library, manifest: ?*co
     self.loaded.appendAssumeCapacity(loaded);
     if (plugin.capabilities.gameplay) self.tracking.player = true;
     if (plugin.capabilities.entities) self.tracking.entities = true;
+    if (caps.admission) self.admission = loaded;
     loaded.ready.store(true, .release);
     if (meta.package.len != 0) {
         log.info("loaded plugin {s} {s} from {s}: {s}", .{ meta.name(), meta.version(), meta.package, meta.description() });
@@ -302,6 +307,7 @@ pub fn isLoaded(self: *const Plugins, name: []const u8) bool {
 }
 
 pub fn unload(self: *Plugins) void {
+    self.admission = null;
     self.stopping.store(true, .release);
     const outer = Work.enter();
     defer Work.hosted = outer;
@@ -561,7 +567,10 @@ pub fn emit(self: *const Plugins, event: *const abi.Event, decision: ?*abi.Trans
         Work.worker = previous_worker;
         Work.context = previous_context;
     }
-    for (self.subscribers[@backingInt(event.kind)].items) |subscriber| subscriber.callback(subscriber.user, event, decision);
+    for (self.subscribers[@backingInt(event.kind)].items) |subscriber| {
+        const control = if (event.kind == .player_authenticated and subscriber.loaded != self.admission) null else decision;
+        subscriber.callback(subscriber.user, event, control);
+    }
 }
 
 pub fn subscribed(self: *const Plugins, kind: abi.EventKind) bool {
@@ -621,6 +630,8 @@ fn hostFor(loaded: *Loaded) abi.Host {
         .player_gameplay = hostPlayerGameplay,
         .find_entity = hostFindEntity,
         .list_entities = hostListEntities,
+        .resume_login = hostResumeLogin,
+        .login_hints = hostLoginHints,
     };
 }
 
@@ -646,7 +657,7 @@ fn hostSubscribe(context: *anyopaque, kind: abi.EventKind, callback: ?abi.EventF
     if (!Work.hosted) return .wrong_thread;
     if (owner.initializing.load(.acquire) != loaded) return .too_late;
     if (@backingInt(kind) >= abi.EventKind.count) return .invalid_argument;
-    const subscriber: Subscriber = .{ .callback = callback orelse return .invalid_argument, .user = user };
+    const subscriber: Subscriber = .{ .loaded = loaded, .callback = callback orelse return .invalid_argument, .user = user };
     for (owner.pending.items) |item| if (item.kind == kind and std.meta.eql(item.subscriber, subscriber)) return .invalid_argument;
     owner.pending.append(owner.gpa, .{ .kind = kind, .subscriber = subscriber }) catch return .failed;
     return .ok;
@@ -894,6 +905,18 @@ fn gameplayQuery(loaded: *Loaded, comptime capability: std.meta.FieldEnum(abi.Ca
     if (Work.context != @as(*const anyopaque, owner) or Work.worker != route.worker) return .wrong_thread;
     const gameplay = route.gameplay orelse return .unsupported;
     return gameplay(route.context, route.link, query);
+}
+
+fn hostResumeLogin(context: *anyopaque, player: abi.Player, done: ?abi.TaskDoneFn, user: ?*anyopaque) callconv(.c) abi.Status {
+    const loaded = from(context);
+    if (loaded.owner.admission != loaded) return .unsupported;
+    return queueAction(from(context), player, .transfer, abi.no_backend, "", done, user);
+}
+
+fn hostLoginHints(context: *anyopaque, player: abi.Player, out: ?*abi.LoginHints, capacity: usize) callconv(.c) abi.Status {
+    const result = out orelse return .invalid_argument;
+    if (capacity < @sizeOf(abi.LoginHints)) return .invalid_argument;
+    return gameplayQuery(from(context), .events, player, .{ .login_hints = result });
 }
 
 fn hostDisconnect(context: *anyopaque, player: abi.Player, reason: abi.Str, done: ?abi.TaskDoneFn, user: ?*anyopaque) callconv(.c) abi.Status {

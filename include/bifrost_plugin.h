@@ -14,7 +14,7 @@ extern "C" {
    The full contract is in docs/plugin-abi.md. */
 
 #define BIFROST_ABI_VERSION 1u
-#define BIFROST_API_REVISION 3u
+#define BIFROST_API_REVISION 4u
 #define BIFROST_NO_BACKEND UINT32_MAX
 #define BIFROST_NO_WORKER UINT32_MAX
 
@@ -89,6 +89,11 @@ typedef struct bifrost_player_info {
     uint8_t xuid[32];
     uint8_t uuid[36];
 } bifrost_player_info;
+
+typedef struct bifrost_login_hints {
+    uint32_t device_len, client_len, self_len, address_len;
+    uint8_t device[200], client[32], self_signed[200], address[48];
+} bifrost_login_hints;
 
 #define BIFROST_NETWORK_RTT (UINT64_C(1) << 0)
 #define BIFROST_NETWORK_RELIABILITY (UINT64_C(1) << 1)
@@ -216,6 +221,7 @@ typedef struct bifrost_entity {
 /* Tracking only runs while a loaded plugin declares it */
 #define BIFROST_CAPABILITY_GAMEPLAY (UINT64_C(1) << 4)
 #define BIFROST_CAPABILITY_ENTITIES (UINT64_C(1) << 5)
+#define BIFROST_CAPABILITY_ADMISSION (UINT64_C(1) << 6)
 
 typedef uint32_t bifrost_log_level;
 enum {
@@ -269,6 +275,7 @@ enum {
     BIFROST_TRANSFER_PROCEED = 0,
     BIFROST_TRANSFER_CANCEL = 1,
     BIFROST_TRANSFER_REDIRECT = 2,
+    BIFROST_TRANSFER_HOLD_LOGIN = 3,
 };
 
 typedef struct bifrost_transfer_decision {
@@ -428,6 +435,8 @@ typedef struct bifrost_host {
     bifrost_status (*find_entity)(void *context, bifrost_player player, uint64_t runtime_id, bifrost_entity *out, size_t capacity) BIFROST_NOEXCEPT;
     /* Copies up to count, sets total to how many are tracked and complete to 0 if some spawns did not fit */
     bifrost_status (*list_entities)(void *context, bifrost_player player, bifrost_entity *out, size_t count, size_t *total, uint32_t *complete) BIFROST_NOEXCEPT;
+    bifrost_status (*resume_login)(void *context, bifrost_player player, bifrost_task_done_fn done, void *user) BIFROST_NOEXCEPT;
+    bifrost_status (*login_hints)(void *context, bifrost_player player, bifrost_login_hints *out, size_t capacity) BIFROST_NOEXCEPT;
 } bifrost_host;
 
 /* Older hosts have a shorter table, so use this instead of sizeof */

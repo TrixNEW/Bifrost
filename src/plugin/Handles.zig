@@ -17,6 +17,7 @@ pub const Route = struct {
 };
 
 pub const Query = union(enum) {
+    login_hints: *abi.LoginHints,
     player: *abi.Gameplay,
     entity: struct { runtime_id: u64, out: *abi.Entity },
     entities: struct { out: []abi.Entity, total: *usize, complete: ?*u32 },

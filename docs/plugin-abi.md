@@ -413,7 +413,7 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
 
 - `BIFROST_ABI_VERSION` changes only for a breaking change. Each side checks the other's `abi_version` and refuses
   a mismatch: Bifrost returns an error for the plugin, a plugin should return `INCOMPATIBLE`.
-- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 3. It is not a host negotiation
+- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 4. It is not a host negotiation
   field; use `BIFROST_HOST_HAS` for each optional function. Keep the host pointer rather than copying a newer
   header's entire table from an older host. New player/network snapshot layouts are fixed in v1.
 - `bifrost_host` only grows at the end. A plugin must not compare `host->struct_size` with its own
@@ -445,3 +445,25 @@ Use `zig build bench -Doptimize=ReleaseFast -- packet-dispatch decode injection 
 codec and queue costs. The optional `callback-latency`, `injection-transport` and Linux `injection-workers`
 scenarios measure callback distributions and verified managed transport. Workloads, results and measurement
 limits are recorded in [`tests/bench/baseline.md`](../tests/bench/baseline.md).
+
+
+## Login admission
+
+API revision 4 appends `login_hints` and `resume_login`. Check their host fields
+before use. One plugin may declare `ADMISSION` alongside `EVENTS`. This requires
+managed sessions and prevents a second admission owner from loading.
+
+Only that plugin receives a decision pointer for `player_authenticated`. Set
+`HOLD_LOGIN` to wait for an asynchronous check or `CANCEL` to reject the player.
+The verified Login packet stays off the backend while held. Other decisions
+continue login. Bifrost's normal handshake deadline still applies.
+
+`login_hints` copies bounded client device, client random and self-signed IDs
+and the connection address into caller-owned storage on the player's worker.
+These client-supplied identifiers are correlation hints, not verified identity.
+Use the authenticated XUID from `player_info` for account ownership.
+
+The admission owner may call `resume_login` from any thread. It queues work on
+the player's worker and optionally reports completion. A stale handle cannot
+resume another connection. Repeated resumes report `TOO_LATE`. Admission tasks
+use the existing task pool and shutdown rules.

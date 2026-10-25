@@ -11,7 +11,7 @@ pub const max_manifest_bytes = 4096;
 pub const ManifestFn = *const fn (out: ?*Str) callconv(.c) Status;
 pub const no_backend: u32 = std.math.maxInt(u32);
 pub const no_worker: u32 = std.math.maxInt(u32);
-pub const api_revision: u32 = 3;
+pub const api_revision: u32 = 4;
 
 pub const ConnectionState = enum(u32) { connected, closing, disconnected, _ };
 pub const AuthenticationState = enum(u32) { pending, authenticated, disabled, unavailable, rejected, _ };
@@ -40,6 +40,17 @@ pub const PlayerInfo = extern struct {
     name: [64]u8 = @splat(0),
     xuid: [32]u8 = @splat(0),
     uuid: [36]u8 = @splat(0),
+};
+
+pub const LoginHints = extern struct {
+    device_len: u32 = 0,
+    client_len: u32 = 0,
+    self_len: u32 = 0,
+    address_len: u32 = 0,
+    device: [200]u8 = @splat(0),
+    client: [32]u8 = @splat(0),
+    self_signed: [200]u8 = @splat(0),
+    address: [48]u8 = @splat(0),
 };
 
 pub const NetworkMetric = struct {
@@ -204,9 +215,10 @@ pub const Capabilities = packed struct(u64) {
     tasks: bool = false,
     gameplay: bool = false,
     entities: bool = false,
-    _: u58 = 0,
+    admission: bool = false,
+    _: u57 = 0,
 
-    pub const supported: Capabilities = .{ .events = true, .commands = true, .packets = true, .tasks = true, .gameplay = true, .entities = true };
+    pub const supported: Capabilities = .{ .events = true, .commands = true, .packets = true, .tasks = true, .gameplay = true, .entities = true, .admission = true };
 };
 
 pub const LogLevel = enum(u32) { err, warn, info, debug, _ };
@@ -252,7 +264,7 @@ pub const Event = extern struct {
     previous_phase: ConnectionPhase = .unknown,
 };
 
-pub const TransferAction = enum(u32) { proceed, cancel, redirect, _ };
+pub const TransferAction = enum(u32) { proceed, cancel, redirect, hold_login, _ };
 
 pub const TransferDecision = extern struct {
     struct_size: u32 = @sizeOf(TransferDecision),
@@ -393,6 +405,9 @@ pub const Host = extern struct {
     player_gameplay: *const fn (context: *anyopaque, player: Player, out: ?*Gameplay, capacity: usize) callconv(.c) Status,
     find_entity: *const fn (context: *anyopaque, player: Player, runtime_id: u64, out: ?*Entity, capacity: usize) callconv(.c) Status,
     list_entities: *const fn (context: *anyopaque, player: Player, out: ?[*]Entity, count: usize, total: ?*usize, complete: ?*u32) callconv(.c) Status,
+
+    resume_login: *const fn (context: *anyopaque, player: Player, done: ?TaskDoneFn, user: ?*anyopaque) callconv(.c) Status,
+    login_hints: *const fn (context: *anyopaque, player: Player, out: ?*LoginHints, capacity: usize) callconv(.c) Status,
 
     pub fn has(self: *const Host, comptime field: std.meta.FieldEnum(Host)) bool {
         const name = @tagName(field);

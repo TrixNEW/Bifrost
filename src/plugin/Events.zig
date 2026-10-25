@@ -37,11 +37,13 @@ pub fn connected(self: Events, route: Handles.Route, address: std.Io.net.IpAddre
     return player;
 }
 
-pub fn authenticated(self: Events, player: abi.Player, name: []const u8, xuid: []const u8, uuid: []const u8, online: bool, state: abi.PlayerState) void {
-    const plugins = self.live(player) orelse return;
+pub fn authenticated(self: Events, player: abi.Player, name: []const u8, xuid: []const u8, uuid: []const u8, online: bool, state: abi.PlayerState) abi.TransferDecision {
+    const plugins = self.live(player) orelse return .{};
     plugins.handles.setIdentity(player, name, xuid, uuid, online);
     self.stateChanged(player, state);
-    plugins.emit(&.{ .kind = .player_authenticated, .player = player, .name = .of(name), .xuid = .of(xuid), .worker = self.worker }, null);
+    var decision: abi.TransferDecision = .{};
+    plugins.emit(&.{ .kind = .player_authenticated, .player = player, .name = .of(name), .xuid = .of(xuid), .worker = self.worker }, &decision);
+    return decision;
 }
 
 pub fn disconnected(self: Events, player: *abi.Player) void {

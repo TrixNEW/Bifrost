@@ -77,6 +77,9 @@ pub const Options = struct {
 
 pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Options) !*Proxy {
     try config.validate();
+    if (options.plugins) |plugins| {
+        if (plugins.admission != null and config.session_mode != .managed) return error.AdmissionRequiresManaged;
+    }
     const self = try gpa.create(Proxy);
     errdefer gpa.destroy(self);
 
@@ -243,6 +246,7 @@ pub fn packet(self: *Proxy, link_id: u64, target: abi.PacketTarget, bytes: []con
 pub fn action(self: *Proxy, link_id: u64, disconnect: bool, backend: u32, reason: []const u8) abi.Status {
     const link = self.findLink(link_id) orelse return .stale_handle;
     if (disconnect) return link.disconnect(reason);
+    if (backend == abi.no_backend) return link.resumeLogin();
     if (backend >= self.router.backends.len) return .invalid_argument;
     link.requestTransfer(.of(backend)) catch |err| return switch (err) {
         error.NotManaged => .unsupported,
@@ -263,6 +267,11 @@ fn routeNetwork(context: *anyopaque, link_id: u64, target: abi.PacketTarget, out
 fn routeGameplay(context: *anyopaque, link_id: u64, query: Handles.Query) abi.Status {
     const self: *Proxy = @ptrCast(@alignCast(context));
     const link = self.findLink(link_id) orelse return .too_late;
+    if (query == .login_hints) {
+        const managed = link.managed orelse return .unsupported;
+        managed.loginHints(query.login_hints) catch return .failed;
+        return .ok;
+    }
     return link.gameplay(query);
 }
 

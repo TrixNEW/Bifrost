@@ -106,6 +106,7 @@ player: PlayerSession,
 upstream: Upstream,
 player_phase: PlayerPhase = .settings,
 identity: ?bedwire.Identity = null,
+admission_pending: bool = false,
 client_data: ?[]u8 = null,
 // Signed into backend Logins, since backends only see the proxy's address
 player_address: ?std.Io.net.IpAddress = null,
@@ -156,6 +157,28 @@ pub fn destroy(self: *Managed) void {
     self.gameplay.deinit(self.gpa);
     self.early.deinit(self.gpa);
     self.gpa.destroy(self);
+}
+
+pub fn loginHints(self: *Managed, out: *abi.LoginHints) !void {
+    out.* = .{};
+    const Data = struct { DeviceId: []const u8 = "", ClientRandomId: i64 = 0, SelfSignedId: []const u8 = "" };
+    var parsed = try std.json.parseFromSlice(Data, self.gpa, self.client_data orelse return error.NotAuthenticated, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    const value = parsed.value;
+    if (value.DeviceId.len <= out.device.len) {
+        @memcpy(out.device[0..value.DeviceId.len], value.DeviceId);
+        out.device_len = @intCast(value.DeviceId.len);
+    }
+    if (value.SelfSignedId.len <= out.self_signed.len) {
+        @memcpy(out.self_signed[0..value.SelfSignedId.len], value.SelfSignedId);
+        out.self_len = @intCast(value.SelfSignedId.len);
+    }
+    if (value.ClientRandomId != 0) out.client_len = @intCast((try std.fmt.bufPrint(&out.client, "{d}", .{value.ClientRandomId})).len);
+    if (self.player_address) |address| {
+        var ip = address;
+        ip.setPort(0);
+        out.address_len = @intCast((try std.fmt.bufPrint(&out.address, "{f}", .{ip})).len);
+    }
 }
 
 pub fn inGame(self: *const Managed) bool {
@@ -468,7 +491,7 @@ pub fn fromPlayer(self: *Managed, ends: Ends, payload: []const u8) !void {
             try self.authenticate(ends, packet);
             try self.player.advance(.resource_packs);
             self.player_phase = .ready;
-            if (self.upstream.phase == .waiting_for_login) try self.loginUpstream(&self.upstream, self.upstreamContext(ends, ends.backend orelse return error.BackendClosed));
+            if (!self.admission_pending and self.upstream.phase == .waiting_for_login) try self.loginUpstream(&self.upstream, self.upstreamContext(ends, ends.backend orelse return error.BackendClosed));
         },
         .ready => unreachable,
     }
@@ -493,7 +516,7 @@ pub fn fromBackend(self: *Managed, ends: Ends, payload: []const u8) !void {
         return err;
     };
     switch (progress) {
-        .wants_login => if (self.player_phase == .ready) try self.loginUpstream(&self.upstream, ctx),
+        .wants_login => if (!self.admission_pending and self.player_phase == .ready) try self.loginUpstream(&self.upstream, ctx),
         .logged_in => {
             defer self.early.clear(self.gpa);
             var batch = self.newBatch(ends, false);

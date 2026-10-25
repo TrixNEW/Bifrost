@@ -117,6 +117,18 @@ pub const Host = struct {
         try check(self.raw.post(self.raw.context, player, Trampoline.finish, user));
     }
 
+    pub fn resumeLogin(self: Host, player: Player, done: ?abi.TaskDoneFn, user: ?*anyopaque) Error!void {
+        if (!self.raw.has(.resume_login)) return error.Unsupported;
+        try check(self.raw.resume_login(self.raw.context, player, done, user));
+    }
+
+    pub fn loginHints(self: Host, player: Player) Error!abi.LoginHints {
+        if (!self.raw.has(.login_hints)) return error.Unsupported;
+        var result: abi.LoginHints = .{};
+        try check(self.raw.login_hints(self.raw.context, player, &result, @sizeOf(abi.LoginHints)));
+        return result;
+    }
+
     pub fn workerCount(self: Host) u32 {
         return self.raw.worker_count(self.raw.context);
     }

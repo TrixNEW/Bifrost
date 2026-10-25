@@ -10,13 +10,13 @@ Built with **Zig 0.17.0**.
 
 ## Features
 
-- **High Performance** — Event-driven workers, no thread per player, zero-copy relaying where the session allows it.
-- **Multi-Backend Support** — Connect players to multiple backend servers.
-- **Seamless Transfers** — Move players between backends without reconnecting.
-- **Session Modes** — Passthrough and managed session handling.
-- **Native Plugins** — Extend functionality using Zig, C, or C++.
-- **Packet Handling** — Intercept, modify, and filter packets through plugins.
-- **Configurable** — Simple TOML configuration.
+- **High Performance** -> Event-driven workers, no thread per player, zero-copy relaying where the session allows it.
+- **Multi-Backend Support** -> Connect players to multiple backend servers.
+- **Seamless Transfers** -> Move players between backends without reconnecting.
+- **Session Modes** -> Accessible session handling.
+- **Native Plugins** -> Extend functionality using Zig, C, or C++.
+- **Packet Handling** -> Intercept, modify, and filter packets.
+- **Configurable** -> Simple configuration.
 
 ## Getting Started
 
@@ -105,11 +105,3 @@ zig build bench -Doptimize=ReleaseFast
 
 `-Dtracy=true` builds with [Tracy](https://github.com/wolfpld/tracy) v0.13 profiler zones. Leave it off for
 production; disabled zones compile to nothing and Tracy isn't fetched.
-
-## License
-
-Licensed under the [GNU AGPLv3](LICENSE).
-
----
-
-Maintained by [Bedrock Phanatics](https://github.com/Bedrock-Phanatics).

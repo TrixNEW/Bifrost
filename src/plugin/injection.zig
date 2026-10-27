@@ -11,7 +11,7 @@ pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
     if (packet.header.sender_subclient != 0 or packet.header.target_subclient != 0) return .unsupported;
     switch (protocol.Current.packetKind(packet.header.packet_id) orelse return .unsupported) {
         .text, .player_skin => {},
-        .toast_request => if (target != .player) return .unsupported,
+        .toast_request, .network_stack_latency => if (target != .player) return .unsupported,
         .request_chunk_radius, .script_message => if (target != .backend) return .unsupported,
         else => return .unsupported,
     }
@@ -27,6 +27,16 @@ test "script messages can only be injected into backends" {
     try testing.expectEqual(abi.Status.unsupported, validate(.player, &script));
     for (0..script.len) |len| try testing.expectEqual(abi.Status.invalid_argument, validate(.backend, script[0..len]));
     try testing.expectEqual(abi.Status.invalid_argument, validate(.backend, &.{ 0xb1, 1, 255, 255, 255, 255, 15 }));
+}
+
+test "network stack latency markers can only be injected into players" {
+    const testing = @import("std").testing;
+    const marker = [_]u8{ 115, 0xe8, 3, 0, 0, 0, 0, 0, 0, 1 };
+    try testing.expectEqual(abi.Status.ok, validate(.player, &marker));
+    try testing.expectEqual(abi.Status.unsupported, validate(.backend, &marker));
+    for (0..marker.len) |len| try testing.expectEqual(abi.Status.invalid_argument, validate(.player, marker[0..len]));
+    try testing.expectEqual(abi.Status.invalid_argument, validate(.player, &.{ 115, 0xe8, 3, 0, 0, 0, 0, 0, 0, 2 }));
+    try testing.expectEqual(abi.Status.unsupported, validate(.player, &.{ 0xf3, 0x10, 0xe8, 3, 0, 0, 0, 0, 0, 0, 1 }));
 }
 
 test "packet injection validates supported packets and truncated input" {
@@ -104,8 +114,8 @@ test "skin and toast injection validates direction and supports HD textures" {
 test "native packet codec and injection fuzz round trips" {
     const std = @import("std");
     const Decoded = @import("Decoded.zig");
-    var buffers: [15][1028]u8 = undefined;
-    var corpus: [15][]const u8 = undefined;
+    var buffers: [16][1028]u8 = undefined;
+    var corpus: [16][]const u8 = undefined;
     for (&buffers, &corpus, 0..) |*buffer, *seed, tag| {
         const out = buffer[4..];
         const len = if (tag < 12) blk: {
@@ -121,11 +131,17 @@ test "native packet codec and injection fuzz round trips" {
             break :blk try Decoded.encode(.{ .packet_id = 9 }, .text, &text, out);
         } else if (tag < 14)
             try Decoded.encode(.{ .packet_id = 69 }, .chunk_radius, &abi.ChunkRadius{ .radius = if (tag == 12) 8 else -1, .max_radius = 255 }, out)
-        else blk: {
+        else if (tag == 14) blk: {
             var writer = protocol.Writer.init(out);
             try writer.writeVarU32(protocol.Current.packetId(.script_message).?);
             const script: protocol.packets.script_message.Packet = .{ .message_id = "suko:staff_rank", .message_value = "Moderator" };
             try script.encode(&writer);
+            break :blk writer.written().len;
+        } else blk: {
+            var writer = protocol.Writer.init(out);
+            try writer.writeVarU32(protocol.Current.packetId(.network_stack_latency).?);
+            const marker: protocol.packets.network_stack_latency.Packet = .{ .creation_time = 1000, .is_from_server = true };
+            try marker.encode(&writer);
             break :blk writer.written().len;
         };
         std.mem.writeInt(u32, buffer[0..4], @intCast(len), .little);
@@ -141,7 +157,7 @@ test "native packet codec and injection fuzz round trips" {
                     try std.testing.expect(packet.header.sender_subclient == 0 and packet.header.target_subclient == 0);
                     switch (packet.value.typed) {
                         .text, .player_skin => {},
-                        .toast_request => try std.testing.expect(target == .player),
+                        .toast_request, .network_stack_latency => try std.testing.expect(target == .player),
                         .script_message => try std.testing.expect(target == .backend),
                         .request_chunk_radius => |radius| try std.testing.expect(target == .backend and radius.chunk_radius >= 0),
                         else => return error.UnsafeInjectionAccepted,

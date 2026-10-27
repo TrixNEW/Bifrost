@@ -281,6 +281,20 @@ fn routeGameplay(context: *anyopaque, link_id: u64, query: Handles.Query) abi.St
         return .ok;
     }
     const link = self.findLink(link_id) orelse return .too_late;
+    if (query == .client_data or query == .set_client_data) {
+        const managed = link.managed orelse return .unsupported;
+        const json = managed.client_data orelse return .too_late;
+        if (query == .client_data) {
+            query.client_data.* = .of(json);
+        } else {
+            var parsed = bedwire.auth.jwt.parseJson(self.gpa, query.set_client_data, Managed.limits) catch |err| return if (err == error.OutOfMemory) .failed else .invalid_argument;
+            defer parsed.deinit();
+            const replacement = self.gpa.dupe(u8, query.set_client_data) catch return .failed;
+            self.gpa.free(json);
+            managed.client_data = replacement;
+        }
+        return .ok;
+    }
     if (query == .login_hints) {
         const managed = link.managed orelse return .unsupported;
         managed.loginHints(query.login_hints) catch return .failed;

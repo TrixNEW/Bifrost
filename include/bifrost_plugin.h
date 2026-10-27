@@ -14,7 +14,7 @@ extern "C" {
    The full contract is in docs/plugin-abi.md. */
 
 #define BIFROST_ABI_VERSION 1u
-#define BIFROST_API_REVISION 5u
+#define BIFROST_API_REVISION 6u
 #define BIFROST_NO_BACKEND UINT32_MAX
 #define BIFROST_NO_WORKER UINT32_MAX
 
@@ -431,7 +431,7 @@ typedef struct bifrost_host {
     /* Writes replacement and replacement_len; return BIFROST_PACKET_REPLACE to apply it. */
     bifrost_status (*encode_packet)(void *context, bifrost_packet *packet, bifrost_packet_type type, const void *data, size_t size) BIFROST_NOEXCEPT;
     /* Check BIFROST_HOST_HAS before queuing a copy from any thread, with optional delivery through done and no listener calls.
-       Supports Text to either target and ScriptMessage or RequestChunkRadius to backends, in game on main sub-clients up to 65536 bytes. */
+       Supports Text and PlayerSkin to either target, ToastRequest to players, and ScriptMessage or RequestChunkRadius to backends, in game on main sub-clients up to 131072 bytes. */
     bifrost_status (*send_packet)(void *context, bifrost_player player, bifrost_packet_target target, bifrost_str bytes, bifrost_task_done_fn done, void *user) BIFROST_NOEXCEPT;
     bifrost_status (*player_info)(void *context, bifrost_player player, bifrost_player_info *out, size_t capacity) BIFROST_NOEXCEPT;
     bifrost_status (*network_stats)(void *context, bifrost_player player, bifrost_packet_target target, bifrost_network_stats *out, size_t capacity) BIFROST_NOEXCEPT;
@@ -445,6 +445,9 @@ typedef struct bifrost_host {
     bifrost_status (*resume_login)(void *context, bifrost_player player, bifrost_task_done_fn done, void *user) BIFROST_NOEXCEPT;
     bifrost_status (*login_hints)(void *context, bifrost_player player, bifrost_login_hints *out, size_t capacity) BIFROST_NOEXCEPT;
     bifrost_status (*backend_health)(void *context, bifrost_player player, uint32_t backend, bifrost_backend_health *out) BIFROST_NOEXCEPT;
+    /* Owning worker only. Borrowed until this callback ends or set_client_data succeeds. */
+    bifrost_status (*client_data)(void *context, bifrost_player player, bifrost_str *out) BIFROST_NOEXCEPT;
+    bifrost_status (*set_client_data)(void *context, bifrost_player player, bifrost_str json) BIFROST_NOEXCEPT;
 } bifrost_host;
 
 /* Older hosts have a shorter table, so use this instead of sizeof */

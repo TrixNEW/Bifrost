@@ -633,6 +633,8 @@ fn hostFor(loaded: *Loaded) abi.Host {
         .resume_login = hostResumeLogin,
         .login_hints = hostLoginHints,
         .backend_health = hostBackendHealth,
+        .client_data = hostClientData,
+        .set_client_data = hostSetClientData,
     };
 }
 
@@ -925,6 +927,15 @@ fn hostLoginHints(context: *anyopaque, player: abi.Player, out: ?*abi.LoginHints
     const result = out orelse return .invalid_argument;
     if (capacity < @sizeOf(abi.LoginHints)) return .invalid_argument;
     return gameplayQuery(from(context), .events, player, .{ .login_hints = result });
+}
+
+fn hostClientData(context: *anyopaque, player: abi.Player, out: ?*abi.Str) callconv(.c) abi.Status {
+    return gameplayQuery(from(context), .packets, player, .{ .client_data = out orelse return .invalid_argument });
+}
+
+fn hostSetClientData(context: *anyopaque, player: abi.Player, json: abi.Str) callconv(.c) abi.Status {
+    const bytes = input(json, 1024 * 1024) orelse return .invalid_argument;
+    return gameplayQuery(from(context), .packets, player, .{ .set_client_data = bytes });
 }
 
 fn hostDisconnect(context: *anyopaque, player: abi.Player, reason: abi.Str, done: ?abi.TaskDoneFn, user: ?*anyopaque) callconv(.c) abi.Status {

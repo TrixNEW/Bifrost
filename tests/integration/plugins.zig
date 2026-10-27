@@ -11,6 +11,55 @@ const abi = bifrost.plugin_abi;
 const io = std.testing.io;
 const gpa = std.testing.allocator;
 
+test "plugin client data stays on its worker and persists across downstream logins" {
+    const Rewrite = struct {
+        var api: *const abi.Host = undefined;
+        var player: std.atomic.Value(u64) = .init(0);
+        var failed: std.atomic.Value(bool) = .init(false);
+        const json = "{\"SkinId\":\"atlas-test\",\"ServerAddress\":\"proxy\"}";
+        fn init(host: *const abi.Host, plugin: *abi.Plugin) callconv(.c) abi.Status {
+            api = host;
+            plugin.name = .of("client-data");
+            plugin.plugin_version = .of("1");
+            plugin.capabilities = .{ .events = true, .packets = true };
+            return host.subscribe(host.context, .player_authenticated, authenticated, null);
+        }
+        fn authenticated(_: ?*anyopaque, event: *const abi.Event, _: ?*abi.TransferDecision) callconv(.c) void {
+            var before: abi.Str = .{};
+            var after: abi.Str = .{};
+            if (api.client_data(api.context, event.player, &before) != .ok or before.len == 0 or
+                api.set_client_data(api.context, event.player, .of(json)) != .ok or
+                api.set_client_data(api.context, event.player, .of("[]")) != .invalid_argument or
+                api.client_data(api.context, event.player, &after) != .ok or !std.mem.eql(u8, after.slice(), json)) failed.store(true, .release);
+            player.store(event.player.id, .release);
+        }
+        fn posted(_: ?*anyopaque, result: *const abi.TaskResult) callconv(.c) void {
+            var value: abi.Str = .{};
+            if (api.client_data(api.context, result.player, &value) != .ok or !std.mem.eql(u8, value.slice(), json)) failed.store(true, .release);
+        }
+    };
+    Rewrite.failed.store(false, .release);
+    Rewrite.player.store(0, .release);
+    var plugins = try bifrost.Plugins.init(gpa, &.{}, .{});
+    defer plugins.deinit();
+    try plugins.add(Rewrite.init, null);
+    var rig: Rig = undefined;
+    try rig.start(.{ .plugins = &plugins });
+    defer rig.deinit();
+    const player: abi.Player = .{ .id = Rewrite.player.load(.acquire) };
+    try std.testing.expect(player.id != 0);
+    var value: abi.Str = .{};
+    try std.testing.expectEqual(abi.Status.wrong_thread, Rewrite.api.client_data(Rewrite.api.context, player, &value));
+    try std.testing.expectEqual(abi.Status.invalid_argument, Rewrite.api.client_data(Rewrite.api.context, player, null));
+    try std.testing.expectEqual(abi.Status.wrong_thread, Rewrite.api.set_client_data(Rewrite.api.context, player, .of(Rewrite.json)));
+    try rig.transfer(1);
+    try rig.waitFor(.transfers_committed, 1);
+    try rig.expectOn(&rig.b);
+    try std.testing.expectEqual(abi.Status.ok, Rewrite.api.post(Rewrite.api.context, player, Rewrite.posted, null));
+    try rig.player.echo("client data retained");
+    try std.testing.expect(!Rewrite.failed.load(.acquire));
+}
+
 const Recorder = struct {
     var counts: [abi.EventKind.count]std.atomic.Value(u32) = @splat(.init(0));
     var player: std.atomic.Value(u64) = .init(0);

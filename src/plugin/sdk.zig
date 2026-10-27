@@ -129,6 +129,19 @@ pub const Host = struct {
         return result;
     }
 
+    /// Borrowed for this worker callback, invalidated by setClientData.
+    pub fn clientData(self: Host, player: Player) Error![]const u8 {
+        if (!self.raw.has(.client_data)) return error.Unsupported;
+        var result: abi.Str = .{};
+        try check(self.raw.client_data(self.raw.context, player, &result));
+        return result.slice();
+    }
+
+    pub fn setClientData(self: Host, player: Player, json: []const u8) Error!void {
+        if (!self.raw.has(.set_client_data)) return error.Unsupported;
+        try check(self.raw.set_client_data(self.raw.context, player, .of(json)));
+    }
+
     pub fn workerCount(self: Host) u32 {
         return self.raw.worker_count(self.raw.context);
     }

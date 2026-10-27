@@ -17,6 +17,8 @@ pub const Route = struct {
 };
 
 pub const Query = union(enum) {
+    client_data: *abi.Str,
+    set_client_data: []const u8,
     backend_health: struct { backend: u32, out: *abi.BackendHealth },
     login_hints: *abi.LoginHints,
     player: *abi.Gameplay,

@@ -170,7 +170,7 @@ buffer and sets `replacement_len`. Return `BIFROST_PACKET_REPLACE` to apply it. 
 packet remains staged until the callback returns; decoding again in that callback still reads its input.
 The size is measured before writing. Failure preserves the previous replacement bytes and length. Strings and the
 input structure must not overlap the output buffer. The packet ID and both sub-client indices are preserved;
-the dispatch still validates the bytes after the callback returns. The replacement limit remains 64 KiB.
+the dispatch still validates the bytes after the callback returns. The replacement limit is 128 KiB.
 
 Both functions return `WRONG_THREAD` outside a fields-enabled callback or for another plugin's context,
 `STALE_HANDLE` for a different packet pointer, `UNSUPPORTED` for an unsupported type or mismatching packet ID,
@@ -190,8 +190,8 @@ Check `BIFROST_HOST_HAS(host, send_packet)` before calling
 `BIFROST_PACKET_TO_BACKEND`, meaning that player's current backend connection. This requires `PACKETS` and
 managed mode, and is available from worker callbacks, task threads and plugin-owned threads after initialization.
 
-`bytes` is one complete packet with its canonical Bedrock header, at most 65536 bytes. Only Text in either
-direction, ScriptMessage to the backend and nonnegative RequestChunkRadius to the backend are supported. Both sub-client indices must be zero.
+`bytes` is one complete packet with its canonical Bedrock header, at most 131072 bytes. Text and PlayerSkin in either
+direction, ToastRequest to players, ScriptMessage to the backend and nonnegative RequestChunkRadius to the backend are supported. Both sub-client indices must be zero.
 Validation uses the managed session's `Current` protocol profile. Unsupported IDs, login/handshake/resource-pack
 packets and world/entity packets are refused. The supported packets contain no entity IDs to translate; backend
 radius injection also updates the radius Bifrost replays during transfers. Use protocol-zig to encode raw packets in Zig, or encode modified
@@ -413,7 +413,7 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
 
 - `BIFROST_ABI_VERSION` changes only for a breaking change. Each side checks the other's `abi_version` and refuses
   a mismatch: Bifrost returns an error for the plugin, a plugin should return `INCOMPATIBLE`.
-- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 5. It is not a host negotiation
+- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 6. It is not a host negotiation
   field; use `BIFROST_HOST_HAS` for each optional function. Keep the host pointer rather than copying a newer
   header's entire table from an older host. New player/network snapshot layouts are fixed in v1.
 - `bifrost_host` only grows at the end. A plugin must not compare `host->struct_size` with its own
@@ -439,7 +439,7 @@ On Linux, `zig build fuzz-test --fuzz=1M` runs the native packet target with LLV
 Its fourteen seeds cover all twelve Text variants and positive and negative chunk radii. Inputs are bounded
 to 1024 bytes. Successful native decodes must survive encoding and decoding with the same fields and header.
 Accepted injections must have supported types, destinations, sub-client indices and radius values. Normal
-test runs replay the seeds. Existing boundary tests exercise the 65536-byte injection limit separately.
+test runs replay the seeds. Existing boundary tests exercise the 131072-byte injection limit separately.
 
 Use `zig build bench -Doptimize=ReleaseFast -- packet-dispatch decode injection --quick` for dispatch,
 codec and queue costs. The optional `callback-latency`, `injection-transport` and Linux `injection-workers`
@@ -484,3 +484,19 @@ its whitelist is disabled. Counts and backend gameplay state remain separate.
 Invalid indices or null outputs return `INVALID_ARGUMENT`, an expired player
 returns `STALE_HANDLE`, and another worker or a plugin thread gets `WRONG_THREAD`.
 Older hosts return `Unsupported` through the Zig wrapper.
+
+### Client data
+
+API revision 6 adds client_data and set_client_data, exposed in Zig as
+host.clientData(player) and host.setClientData(player, json). Check host size
+before calling either function. Both require PACKETS capability, a managed
+authenticated session and the owning worker callback. Other threads receive
+WRONG_THREAD and stale player handles receive STALE_HANDLE.
+
+The getter borrows the verified client JSON until the callback ends or the setter
+succeeds. The setter validates a JSON object with the existing 1 MiB and nesting
+limits, then copies it before replacing the previous data. Invalid input and
+allocation failures leave the previous value intact. The authenticated identity
+is separate. Future downstream logins are signed with the updated client data.
+Bifrost does not impose a skin policy. Plugins own validation and any skin
+changes that must be replayed after a transfer.

@@ -8,7 +8,7 @@ pub const Decoded = @import("Decoded.zig");
 const log = std.log.scoped(.plugin);
 
 pub const id_count = 1024;
-pub const max_replacement = 64 * 1024;
+pub const max_replacement = 128 * 1024;
 // Room for two replacements, so a chain can read one while writing the next
 pub const scratch_bytes = 2 * max_replacement;
 const slow_warning_interval_ns = 10 * std.time.ns_per_s;

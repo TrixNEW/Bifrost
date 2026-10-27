@@ -1,7 +1,7 @@
 const protocol = @import("bedwire").protocol;
 const abi = @import("abi.zig");
 
-pub const max_packet_bytes = 65536;
+pub const max_packet_bytes = 128 * 1024;
 
 pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
     if (target != .player and target != .backend) return .invalid_argument;
@@ -10,7 +10,8 @@ pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
     const packet = protocol.packet.decode(bytes, limits) catch return .invalid_argument;
     if (packet.header.sender_subclient != 0 or packet.header.target_subclient != 0) return .unsupported;
     switch (protocol.Current.packetKind(packet.header.packet_id) orelse return .unsupported) {
-        .text => {},
+        .text, .player_skin => {},
+        .toast_request => if (target != .player) return .unsupported,
         .request_chunk_radius, .script_message => if (target != .backend) return .unsupported,
         else => return .unsupported,
     }
@@ -44,10 +45,10 @@ test "packet injection validates supported packets and truncated input" {
     oversized[0] = 9;
     try testing.expectEqual(abi.Status.invalid_argument, validate(.player, &oversized));
     const Decoded = @import("Decoded.zig");
-    const message: [max_packet_bytes - 10]u8 = @splat('x');
+    const message: [65536 - 10]u8 = @splat('x');
     const text_fields: abi.Text = .{ .message = .of(&message) };
     const len = try Decoded.encode(.{ .packet_id = 9 }, .text, &text_fields, oversized[0..max_packet_bytes]);
-    try testing.expectEqual(@as(usize, max_packet_bytes), len);
+    try testing.expectEqual(@as(usize, 65536), len);
     try testing.expectEqual(abi.Status.ok, validate(.player, oversized[0..len]));
     try testing.expectEqual(abi.Status.invalid_argument, validate(.player, oversized[0 .. len - 1]));
     var buffer: [4]u8 = undefined;
@@ -56,6 +57,48 @@ test "packet injection validates supported packets and truncated input" {
         _ = validate(.player, &buffer);
         _ = validate(.backend, &buffer);
     }
+}
+
+test "skin and toast injection validates direction and supports HD textures" {
+    const std = @import("std");
+    const testing = std.testing;
+    var texture: [128 * 128 * 4]u8 = @splat(255);
+    var skin: protocol.types.SerializedSkinRef = .{
+        .id = "test",
+        .play_fab_id = "",
+        .resource_patch = "{}",
+        .image_data = .{ .width = 0, .height = 0, .image_bytes = "" },
+        .animated_image_data = .empty,
+        .cape_image_data = .{ .width = 0, .height = 0, .image_bytes = "" },
+        .geometry_data = "",
+        .geometry_data_min_engine_version = "",
+        .animation_data = "",
+        .cape_id = "",
+        .full_id = "",
+        .arm_size = .wide,
+        .skin_color = 0,
+        .persona_pieces = .empty,
+        .piece_tint_colors = .empty,
+        .is_premium = false,
+        .is_persona = false,
+        .is_persona_cape_on_classic_skin = false,
+        .is_primary_user = true,
+        .overrides_player_appearance = false,
+        .trusted_skin_flag = "",
+        .profile_hash = "",
+    };
+    skin.image_data = .{ .width = 128, .height = 128, .image_bytes = &texture };
+    var buffer: [80 * 1024]u8 = undefined;
+    var writer = protocol.Writer.init(&buffer);
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.player_skin).? }, .packet = .{ .player_skin = .{ .uuid = @splat(0), .serialized_skin = skin, .localized_new_skin_name = "", .localized_old_skin_name = "" } } });
+    try testing.expect(writer.written().len > 65536);
+    try testing.expectEqual(abi.Status.ok, validate(.backend, writer.written()));
+    try testing.expectEqual(abi.Status.ok, validate(.player, writer.written()));
+    try testing.expectEqual(abi.Status.invalid_argument, validate(.backend, writer.written()[0 .. writer.written().len - 1]));
+    writer = protocol.Writer.init(&buffer);
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.toast_request).? }, .packet = .{ .toast_request = .{ .title = "Skin", .content = "Replaced" } } });
+    try testing.expectEqual(abi.Status.ok, validate(.player, writer.written()));
+    try testing.expectEqual(abi.Status.unsupported, validate(.backend, writer.written()));
 }
 
 test "native packet codec and injection fuzz round trips" {
@@ -97,7 +140,8 @@ test "native packet codec and injection fuzz round trips" {
                     const packet = try protocol.Current.decodeBorrowed(bytes, .{ .max_packet_bytes = max_packet_bytes });
                     try std.testing.expect(packet.header.sender_subclient == 0 and packet.header.target_subclient == 0);
                     switch (packet.value.typed) {
-                        .text => {},
+                        .text, .player_skin => {},
+                        .toast_request => try std.testing.expect(target == .player),
                         .script_message => try std.testing.expect(target == .backend),
                         .request_chunk_radius => |radius| try std.testing.expect(target == .backend and radius.chunk_radius >= 0),
                         else => return error.UnsafeInjectionAccepted,

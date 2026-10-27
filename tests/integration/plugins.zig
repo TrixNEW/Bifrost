@@ -1134,7 +1134,7 @@ const Injector = struct {
 
     fn wait() !void {
         for (0..500) |_| {
-            if (completed.load(.acquire) == 4) return;
+            if (completed.load(.acquire) == 5) return;
             try io.sleep(.fromMilliseconds(10), .awake);
         }
         return error.WaitTimedOut;
@@ -1163,18 +1163,35 @@ fn injectPackets(rig: *Rig) !void {
         .message_value = "Moderator",
     } });
     try std.testing.expectEqual(abi.Status.ok, host.send_packet(host.context, Recorder.handle(), .backend, .of(script), Injector.done, null));
-    var received: usize = 0;
-    while (received < 3) {
+    var marker_buffer: [16]u8 = undefined;
+    const marker = try managed.typedPacket(&marker_buffer, .{ .network_stack_latency = .{ .creation_time = 4000, .is_from_server = true } });
+    try std.testing.expectEqual(abi.Status.ok, host.send_packet(host.context, Recorder.handle(), .player, .of(marker), Injector.done, null));
+    try std.testing.expectEqual(abi.Status.unsupported, host.send_packet(host.context, Recorder.handle(), .backend, .of(marker), Injector.done, null));
+    var texts: usize = 0;
+    var radius_seen = false;
+    var marker_seen = false;
+    while (texts < 2 or !radius_seen or !marker_seen) {
         var packets = try rig.player.receive();
         defer packets.deinit();
         while (packets.next()) |packet| {
-            const decoded = (try rig.player.session.decodePacket(packet)).value.typed;
-            switch (received) {
-                0, 1 => try std.testing.expectEqualStrings(messages[received], decoded.text.body.message_only.message),
-                2 => try std.testing.expectEqual(@as(i32, 10), decoded.chunk_radius_updated.chunk_radius),
+            switch ((try rig.player.session.decodePacket(packet)).value.typed) {
+                .text => |text| {
+                    try std.testing.expectEqualStrings(messages[texts], text.body.message_only.message);
+                    texts += 1;
+                },
+                .chunk_radius_updated => |updated| {
+                    try std.testing.expectEqual(@as(i32, 10), updated.chunk_radius);
+                    radius_seen = true;
+                },
+                .network_stack_latency => |latency| {
+                    // Injections to one player keep their queue order
+                    try std.testing.expect(texts >= 1);
+                    try std.testing.expectEqual(@as(u64, 4000), latency.creation_time);
+                    try std.testing.expect(latency.is_from_server);
+                    marker_seen = true;
+                },
                 else => return error.UnexpectedPacket,
             }
-            received += 1;
         }
     }
     try Injector.wait();

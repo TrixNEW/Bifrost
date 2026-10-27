@@ -431,7 +431,7 @@ typedef struct bifrost_host {
     /* Writes replacement and replacement_len; return BIFROST_PACKET_REPLACE to apply it. */
     bifrost_status (*encode_packet)(void *context, bifrost_packet *packet, bifrost_packet_type type, const void *data, size_t size) BIFROST_NOEXCEPT;
     /* Check BIFROST_HOST_HAS before queuing a copy from any thread, with optional delivery through done and no listener calls.
-       Supports Text and PlayerSkin to either target, ToastRequest to players, and ScriptMessage or RequestChunkRadius to backends, in game on main sub-clients up to 131072 bytes. */
+       Supports Text and PlayerSkin to either target, ToastRequest and NetworkStackLatency to players, and ScriptMessage or RequestChunkRadius to backends, in game on main sub-clients up to 131072 bytes. */
     bifrost_status (*send_packet)(void *context, bifrost_player player, bifrost_packet_target target, bifrost_str bytes, bifrost_task_done_fn done, void *user) BIFROST_NOEXCEPT;
     bifrost_status (*player_info)(void *context, bifrost_player player, bifrost_player_info *out, size_t capacity) BIFROST_NOEXCEPT;
     bifrost_status (*network_stats)(void *context, bifrost_player player, bifrost_packet_target target, bifrost_network_stats *out, size_t capacity) BIFROST_NOEXCEPT;

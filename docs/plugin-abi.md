@@ -402,7 +402,7 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
   takes the proxy with it.
 - Packet hooks, commands, messages and injection need managed mode. Passthrough only gets events, player
   information, networking snapshots and the transport-level disconnect.
-- Typed fields cover Text and RequestChunkRadius. Injection also accepts NetworkStackLatency to players and ScriptMessage to backends. Other packets are raw bytes.
+- Typed fields cover Text and RequestChunkRadius. Injection also accepts PlayerSkin either way, ToastRequest and NetworkStackLatency to players and ScriptMessage to backends. Other packets are raw bytes.
 - Every hook, command or tracking capability that needs in-game batches turns off the opaque relay for that
   direction, and with more than one backend every batch is decoded anyway for transfers.
 - `run` callbacks share one pool of `[limits] plugin_task_threads` threads (128 tasks in total, 32 per plugin), so a blocking

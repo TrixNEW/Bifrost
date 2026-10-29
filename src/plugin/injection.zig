@@ -11,7 +11,7 @@ pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
     if (packet.header.sender_subclient != 0 or packet.header.target_subclient != 0) return .unsupported;
     switch (protocol.Current.packetKind(packet.header.packet_id) orelse return .unsupported) {
         .text, .player_skin => {},
-        .toast_request, .network_stack_latency, .correct_player_move_prediction, .update_block, .set_actor_data => if (target != .player) return .unsupported,
+        .toast_request, .network_stack_latency, .correct_player_move_prediction, .update_block, .set_actor_data, .inventory_slot => if (target != .player) return .unsupported,
         .request_chunk_radius, .script_message => if (target != .backend) return .unsupported,
         else => return .unsupported,
     }
@@ -174,6 +174,23 @@ test "block updates and actor data can be injected into players to resync what a
     const data = writer.written();
     try testing.expectEqual(abi.Status.ok, validate(.player, data));
     try testing.expectEqual(abi.Status.unsupported, validate(.backend, data));
+}
+
+test "inventory slots can be injected into players to undo an item use a plugin refused" {
+    const testing = @import("std").testing;
+    var buffer: [128]u8 = undefined;
+    var writer = protocol.Writer.init(&buffer);
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.inventory_slot).? }, .packet = .{ .inventory_slot = .{
+        .container_id = 0,
+        .slot = 2,
+        .full_container_name = null,
+        .storage_item = null,
+        .item = .{ .id = 5, .stack_size = 16, .aux_value = 0, .net_id_variant = 3, .block_runtime_id = 0, .user_data_buffer = "" },
+    } } });
+    const slot = writer.written();
+    try testing.expectEqual(abi.Status.ok, validate(.player, slot));
+    try testing.expectEqual(abi.Status.unsupported, validate(.backend, slot));
+    for (0..slot.len) |len| try testing.expect(validate(.player, slot[0..len]) != .ok);
 }
 
 test "native packet codec and injection fuzz round trips" {

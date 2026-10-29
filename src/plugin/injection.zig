@@ -11,13 +11,55 @@ pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
     if (packet.header.sender_subclient != 0 or packet.header.target_subclient != 0) return .unsupported;
     switch (protocol.Current.packetKind(packet.header.packet_id) orelse return .unsupported) {
         .text, .player_skin => {},
-        .toast_request, .network_stack_latency => if (target != .player) return .unsupported,
+        .toast_request, .network_stack_latency, .correct_player_move_prediction => if (target != .player) return .unsupported,
         .request_chunk_radius, .script_message => if (target != .backend) return .unsupported,
         else => return .unsupported,
     }
     const decoded = protocol.Current.decodeBorrowed(bytes, limits) catch return .invalid_argument;
-    if (decoded.value.typed == .request_chunk_radius and decoded.value.typed.request_chunk_radius.chunk_radius < 0) return .invalid_argument;
+    switch (decoded.value.typed) {
+        .request_chunk_radius => |request| if (request.chunk_radius < 0) return .invalid_argument,
+        // Movement authority plugins correct the player itself; vehicles and non-finite positions are refused
+        .correct_player_move_prediction => |correction| if (correction.prediction_type != .player or !finite(correction)) return .invalid_argument,
+        else => {},
+    }
     return .ok;
+}
+
+fn finite(correction: protocol.packets.correct_player_move_prediction.Packet) bool {
+    const std = @import("std");
+    const values = [_]f32{ correction.pos.x, correction.pos.y, correction.pos.z, correction.pos_delta.x, correction.pos_delta.y, correction.pos_delta.z, correction.rotation.x, correction.rotation.y };
+    for (values) |value| if (!std.math.isFinite(value)) return false;
+    return true;
+}
+
+test "movement corrections can only be injected into players, for the player itself" {
+    const std = @import("std");
+    const testing = std.testing;
+    var correction: protocol.packets.correct_player_move_prediction.Packet = .{
+        .prediction_type = .player,
+        .pos = .{ .x = 1, .y = 65.621, .z = 1 },
+        .pos_delta = .{ .x = 0, .y = -0.0784, .z = 0 },
+        .rotation = .{ .x = 0, .y = 0 },
+        .vehicle_angular_velocity = null,
+        .on_ground = true,
+        .tick = 120,
+    };
+    var buffer: [64]u8 = undefined;
+    var writer = protocol.Writer.init(&buffer);
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.correct_player_move_prediction).? }, .packet = .{ .correct_player_move_prediction = correction } });
+    const bytes = writer.written();
+    try testing.expectEqual(abi.Status.ok, validate(.player, bytes));
+    try testing.expectEqual(abi.Status.unsupported, validate(.backend, bytes));
+    for (0..bytes.len) |len| try testing.expectEqual(abi.Status.invalid_argument, validate(.player, bytes[0..len]));
+    correction.prediction_type = .vehicle;
+    writer = protocol.Writer.init(&buffer);
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.correct_player_move_prediction).? }, .packet = .{ .correct_player_move_prediction = correction } });
+    try testing.expectEqual(abi.Status.invalid_argument, validate(.player, writer.written()));
+    correction.prediction_type = .player;
+    correction.pos.y = std.math.nan(f32);
+    writer = protocol.Writer.init(&buffer);
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.correct_player_move_prediction).? }, .packet = .{ .correct_player_move_prediction = correction } });
+    try testing.expectEqual(abi.Status.invalid_argument, validate(.player, writer.written()));
 }
 
 test "script messages can only be injected into backends" {

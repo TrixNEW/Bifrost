@@ -11,7 +11,7 @@ pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
     if (packet.header.sender_subclient != 0 or packet.header.target_subclient != 0) return .unsupported;
     switch (protocol.Current.packetKind(packet.header.packet_id) orelse return .unsupported) {
         .text, .player_skin => {},
-        .toast_request, .network_stack_latency, .correct_player_move_prediction => if (target != .player) return .unsupported,
+        .toast_request, .network_stack_latency, .correct_player_move_prediction, .update_block, .set_actor_data => if (target != .player) return .unsupported,
         .request_chunk_radius, .script_message => if (target != .backend) return .unsupported,
         else => return .unsupported,
     }
@@ -151,6 +151,29 @@ test "skin and toast injection validates direction and supports HD textures" {
     try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.toast_request).? }, .packet = .{ .toast_request = .{ .title = "Skin", .content = "Replaced" } } });
     try testing.expectEqual(abi.Status.ok, validate(.player, writer.written()));
     try testing.expectEqual(abi.Status.unsupported, validate(.backend, writer.written()));
+}
+
+test "block updates and actor data can be injected into players to resync what a correction undid" {
+    const testing = @import("std").testing;
+    var buffer: [128]u8 = undefined;
+    var writer = protocol.Writer.init(&buffer);
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.update_block).? }, .packet = .{ .update_block = .{ .block_position = .{ .x = 1, .y = 64, .z = -3 }, .block_runtime_id = 12, .flags = 3, .layer = 0 } } });
+    const block = writer.written();
+    try testing.expectEqual(abi.Status.ok, validate(.player, block));
+    try testing.expectEqual(abi.Status.unsupported, validate(.backend, block));
+    for (0..block.len) |len| try testing.expect(validate(.player, block[0..len]) != .ok);
+
+    const flags = [_]protocol.types.DataItemEntry{.{ .id = 0, .payload = .{ .int64 = .{ .type = .int64, .value = 1 << 3 } } }};
+    writer = protocol.Writer.init(&buffer);
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.set_actor_data).? }, .packet = .{ .set_actor_data = .{
+        .target_runtime_id = 1,
+        .actor_data = .init(&flags),
+        .synched_properties = .{ .int_entries_list = .empty, .float_entries_list = .empty },
+        .tick = 0,
+    } } });
+    const data = writer.written();
+    try testing.expectEqual(abi.Status.ok, validate(.player, data));
+    try testing.expectEqual(abi.Status.unsupported, validate(.backend, data));
 }
 
 test "native packet codec and injection fuzz round trips" {

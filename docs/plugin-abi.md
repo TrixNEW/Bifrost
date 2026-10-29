@@ -191,7 +191,7 @@ Check `BIFROST_HOST_HAS(host, send_packet)` before calling
 managed mode, and is available from worker callbacks, task threads and plugin-owned threads after initialization.
 
 `bytes` is one complete packet with its canonical Bedrock header, at most 131072 bytes. Text and PlayerSkin in either
-direction, ToastRequest, NetworkStackLatency and player-type CorrectPlayerMovePrediction with finite values to players,
+direction, ToastRequest, NetworkStackLatency, UpdateBlock, SetActorData and player-type CorrectPlayerMovePrediction with finite values to players,
 ScriptMessage to the backend and nonnegative RequestChunkRadius to the backend are supported. Both sub-client indices must be zero. A latency marker sent from inside a backend packet hook leaves
 after the batch holding that packet on the same ordered channel, so its echo shows the client has received everything before it.
 The client's echo travels to the backend like any other packet; a plugin that owns the marker should cancel it in a player packet hook.
@@ -402,7 +402,7 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
   takes the proxy with it.
 - Packet hooks, commands, messages and injection need managed mode. Passthrough only gets events, player
   information, networking snapshots and the transport-level disconnect.
-- Typed fields cover Text and RequestChunkRadius. Injection also accepts PlayerSkin either way, ToastRequest, NetworkStackLatency and CorrectPlayerMovePrediction to players and ScriptMessage to backends. Other packets are raw bytes.
+- Typed fields cover Text and RequestChunkRadius. Injection also accepts PlayerSkin either way, ToastRequest, NetworkStackLatency, UpdateBlock, SetActorData and CorrectPlayerMovePrediction to players and ScriptMessage to backends. Other packets are raw bytes.
 - Every hook, command or tracking capability that needs in-game batches turns off the opaque relay for that
   direction, and with more than one backend every batch is decoded anyway for transfers.
 - `run` callbacks share one pool of `[limits] plugin_task_threads` threads (128 tasks in total, 32 per plugin), so a blocking

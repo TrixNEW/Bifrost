@@ -2,6 +2,8 @@ const protocol = @import("bedwire").protocol;
 const abi = @import("abi.zig");
 
 pub const max_packet_bytes = 128 * 1024;
+/// What a client renders without lag, the same bound servers keep forms to.
+pub const max_form_bytes = 64 * 1024;
 
 pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
     if (target != .player and target != .backend) return .invalid_argument;
@@ -11,7 +13,7 @@ pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
     if (packet.header.sender_subclient != 0 or packet.header.target_subclient != 0) return .unsupported;
     switch (protocol.Current.packetKind(packet.header.packet_id) orelse return .unsupported) {
         .text, .player_skin => {},
-        .toast_request, .network_stack_latency, .correct_player_move_prediction, .update_block, .set_actor_data, .inventory_slot => if (target != .player) return .unsupported,
+        .toast_request, .network_stack_latency, .correct_player_move_prediction, .update_block, .set_actor_data, .inventory_slot, .modal_form_request => if (target != .player) return .unsupported,
         .request_chunk_radius, .script_message => if (target != .backend) return .unsupported,
         else => return .unsupported,
     }
@@ -20,9 +22,19 @@ pub fn validate(target: abi.PacketTarget, bytes: []const u8) abi.Status {
         .request_chunk_radius => |request| if (request.chunk_radius < 0) return .invalid_argument,
         // Movement authority plugins correct the player itself; vehicles and non-finite positions are refused
         .correct_player_move_prediction => |correction| if (correction.prediction_type != .player or !finite(correction)) return .invalid_argument,
+        // A client shown a form it cannot parse closes it, so only well formed JSON reaches it
+        .modal_form_request => |form| if (form.form_ui_json.len > max_form_bytes or !validJson(form.form_ui_json)) return .invalid_argument,
         else => {},
     }
     return .ok;
+}
+
+fn validJson(text: []const u8) bool {
+    const std = @import("std");
+    if (!std.unicode.utf8ValidateSlice(text)) return false;
+    var buffer: [4096]u8 = undefined;
+    var fixed: std.heap.FixedBufferAllocator = .init(&buffer);
+    return std.json.validate(fixed.allocator(), text) catch false;
 }
 
 fn finite(correction: protocol.packets.correct_player_move_prediction.Packet) bool {
@@ -59,6 +71,22 @@ test "movement corrections can only be injected into players, for the player its
     correction.pos.y = std.math.nan(f32);
     writer = protocol.Writer.init(&buffer);
     try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.correct_player_move_prediction).? }, .packet = .{ .correct_player_move_prediction = correction } });
+    try testing.expectEqual(abi.Status.invalid_argument, validate(.player, writer.written()));
+}
+
+test "forms can only be injected into players, as JSON a client can read" {
+    const std = @import("std");
+    const testing = std.testing;
+    var buffer: [256]u8 = undefined;
+    var writer = protocol.Writer.init(&buffer);
+    const form: protocol.packets.modal_form_request.Packet = .{ .form_id = 0x80000001, .form_ui_json = "{\"type\":\"form\",\"title\":\"History\",\"content\":\"\",\"buttons\":[]}" };
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.modal_form_request).? }, .packet = .{ .modal_form_request = form } });
+    const bytes = writer.written();
+    try testing.expectEqual(abi.Status.ok, validate(.player, bytes));
+    try testing.expectEqual(abi.Status.unsupported, validate(.backend, bytes));
+    for (0..bytes.len) |len| try testing.expectEqual(abi.Status.invalid_argument, validate(.player, bytes[0..len]));
+    writer = protocol.Writer.init(&buffer);
+    try protocol.typed.encode(&writer, .{ .header = .{ .packet_id = protocol.Current.packetId(.modal_form_request).? }, .packet = .{ .modal_form_request = .{ .form_id = 1, .form_ui_json = "{\"type\":" } } });
     try testing.expectEqual(abi.Status.invalid_argument, validate(.player, writer.written()));
 }
 

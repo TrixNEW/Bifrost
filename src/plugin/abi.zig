@@ -11,7 +11,7 @@ pub const max_manifest_bytes = 4096;
 pub const ManifestFn = *const fn (out: ?*Str) callconv(.c) Status;
 pub const no_backend: u32 = std.math.maxInt(u32);
 pub const no_worker: u32 = std.math.maxInt(u32);
-pub const api_revision: u32 = 6;
+pub const api_revision: u32 = 7;
 
 pub const ConnectionState = enum(u32) { connected, closing, disconnected, _ };
 pub const AuthenticationState = enum(u32) { pending, authenticated, disabled, unavailable, rejected, _ };
@@ -416,6 +416,7 @@ pub const Host = extern struct {
     // Borrowed until the callback returns or set_client_data succeeds. Owning worker only.
     client_data: *const fn (context: *anyopaque, player: Player, out: ?*Str) callconv(.c) Status,
     set_client_data: *const fn (context: *anyopaque, player: Player, json: Str) callconv(.c) Status,
+    revision: u32 = api_revision,
 
     pub fn has(self: *const Host, comptime field: std.meta.FieldEnum(Host)) bool {
         const name = @tagName(field);

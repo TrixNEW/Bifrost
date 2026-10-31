@@ -1359,6 +1359,48 @@ test "a plugin command runs on the player's worker and never reaches the backend
     try std.testing.expectEqual(@as(u32, 1), Commander.commands.load(.acquire));
 }
 
+test "packet guards run before plugin commands" {
+    const Guard = struct {
+        var blocked: std.atomic.Value(u32) = .init(0);
+
+        fn init(api: *const abi.Host, plugin: *abi.Plugin) callconv(.c) abi.Status {
+            if (!api.has(.revision) or api.revision < 7) return .incompatible;
+            plugin.name = .of("command-guard");
+            plugin.plugin_version = .of("1");
+            plugin.capabilities = .{ .packets = true };
+            return api.subscribe_packet(api.context, .from_player, bedwire.protocol.Current.packetId(.command_request).?, .in_game, .{}, inspect, null);
+        }
+
+        fn inspect(_: ?*anyopaque, packet: *abi.Packet) callconv(.c) abi.PacketAction {
+            const decoded = bedwire.protocol.Current.decodeBorrowed(packet.bytes.slice(), .{}) catch return .cancel;
+            const command = decoded.value.typed.command_request.command;
+            if (!std.mem.endsWith(u8, command, "blocked")) return .pass;
+            _ = blocked.fetchAdd(1, .release);
+            return .cancel;
+        }
+    };
+    Guard.blocked.store(0, .release);
+    Commander.reset();
+    var plugins: bifrost.Plugins = try .init(gpa, &.{}, .{});
+    defer plugins.deinit();
+    try plugins.add(Guard.init, null);
+    try plugins.add(Commander.init, null);
+    var rig: Rig = undefined;
+    try rig.start(.{ .plugins = &plugins });
+    defer rig.deinit();
+    plugins.backends = rig.running.proxy.config.backends();
+    try Commander.send(&rig, "/hub blocked");
+    try Commander.send(&rig, "/gamemode blocked");
+    try rig.player.echo("guards finished");
+    try std.testing.expectEqual(@as(u32, 2), Guard.blocked.load(.acquire));
+    try std.testing.expectEqual(@as(u32, 0), Commander.commands.load(.acquire));
+    try std.testing.expectEqual(@as(u32, 0), rig.a.commands.load(.acquire));
+    try Commander.send(&rig, "/hub allowed");
+    try rig.waitFor(.transfers_committed, 1);
+    try rig.expectOn(&rig.b);
+    try std.testing.expectEqual(@as(u32, 1), Commander.commands.load(.acquire));
+}
+
 const wire = bedwire.protocol.packets.available_commands;
 
 fn commandList(buffer: []u8, names: []const []const u8) ![]const u8 {

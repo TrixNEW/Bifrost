@@ -280,6 +280,10 @@ const Batch = struct {
                 }
             }
         };
+        if (!self.to_player and kind == .command_request) if (shared.hooks) |hooks| if (hooks.plugins.hasCommands()) {
+            const request = try typed(try decode(packet), .command_request);
+            if (hooks.plugins.runCommand(hooks.worker, self.ends.io, self.managed.plugin_player, request.command)) return null;
+        };
         if (self.to_player) {
             try self.managed.sentToPlayer(kind, packet);
         } else if (ids) |swap| {
@@ -585,10 +589,6 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *PlayerSession.Packets) 
     var batch = self.newBatch(ends, false);
     errdefer batch.discard();
     while (packets.next()) |packet| {
-        if (packet.kind == .command_request) if (self.shared.hooks) |hooks| if (hooks.plugins.hasCommands()) {
-            const request = try typed(try self.player.decodePacket(packet), .command_request);
-            if (hooks.plugins.runCommand(hooks.worker, ends.io, self.plugin_player, request.command)) continue;
-        };
         if (self.syncing) if (packet.kind) |kind| switch (kind) {
             .player_action => if (Handoff.isAck(try self.player.decodePacket(packet))) {
                 self.dimension_acks += 1;

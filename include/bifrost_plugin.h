@@ -14,7 +14,7 @@ extern "C" {
    The full contract is in docs/plugin-abi.md. */
 
 #define BIFROST_ABI_VERSION 1u
-#define BIFROST_API_REVISION 6u
+#define BIFROST_API_REVISION 7u
 #define BIFROST_NO_BACKEND UINT32_MAX
 #define BIFROST_NO_WORKER UINT32_MAX
 
@@ -448,6 +448,7 @@ typedef struct bifrost_host {
     /* Owning worker only. Borrowed until this callback ends or set_client_data succeeds. */
     bifrost_status (*client_data)(void *context, bifrost_player player, bifrost_str *out) BIFROST_NOEXCEPT;
     bifrost_status (*set_client_data)(void *context, bifrost_player player, bifrost_str json) BIFROST_NOEXCEPT;
+    uint32_t revision;
 } bifrost_host;
 
 /* Older hosts have a shorter table, so use this instead of sizeof */

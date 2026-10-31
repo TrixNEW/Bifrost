@@ -416,8 +416,9 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
 
 - `BIFROST_ABI_VERSION` changes only for a breaking change. Each side checks the other's `abi_version` and refuses
   a mismatch: Bifrost returns an error for the plugin, a plugin should return `INCOMPATIBLE`.
-- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 6. It is not a host negotiation
-  field; use `BIFROST_HOST_HAS` for each optional function. Keep the host pointer rather than copying a newer
+- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 7.
+  Hosts from revision 7 expose `revision` at the end of the table. Check `BIFROST_HOST_HAS(host, revision)`
+  before reading it. Continue checking each optional function with `BIFROST_HOST_HAS`. Keep the host pointer rather than copying a newer
   header's entire table from an older host. New player/network snapshot layouts are fixed in v1.
 - `bifrost_host` only grows at the end. A plugin must not compare `host->struct_size` with its own
   `sizeof(bifrost_host)`, or it would refuse older v1 hosts for no reason. Check the functions it needs with
@@ -433,6 +434,11 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
 - Enums and status codes can gain values; treat unknown ones as "not for me" rather than as errors.
 
 ## Verification
+
+API revision 7 runs client packet hooks before dispatching plugin commands.
+Hooks can cancel or replace a command before either a plugin or backend sees it.
+Plugins depending on this ordering must require the host's `revision` field to be
+present and at least 7. Earlier hosts cannot provide that guarantee.
 
 `zig build test` covers the native ABI layouts and constants, borrowed field access, replacement chains,
 phase and direction checks, queue limits, allocation failures, worker ownership, disconnects, transfers and

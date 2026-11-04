@@ -39,6 +39,29 @@ test "observes the login, then relays everything after it untouched" {
     try std.testing.expectEqual(@as(u64, frames.settings.len + frames.status.len + opaque_bytes.len), stats.bytes_to_player);
 }
 
+test "unreliable messages wait for the Login to go through" {
+    var frames: bedrock.Frames = try .init(bedrock.current_version);
+    defer frames.deinit();
+    var backend: Backend = undefined;
+    try backend.start(io, .{ .replies = &.{ frames.settings, frames.status } });
+    defer backend.deinit();
+    var running: Running = undefined;
+    try running.start(io, try fixtures.config(&.{backend.address()}), .{});
+    defer running.deinit();
+
+    var player: Player = try .connect(io, running.address());
+    defer player.deinit();
+    try player.send(frames.request);
+    try player.expect(frames.settings);
+    try player.connection.send("early", .unreliable);
+    try running.waitForStat(.unreliable_dropped, 1);
+    try player.send(frames.login);
+    try player.expect(frames.status);
+    try player.connection.send("late", .unreliable);
+    try player.expect("late");
+    try std.testing.expectEqual(@as(u32, 3), backend.received.load(.acquire));
+}
+
 test "an unfollowable handshake is still relayed when auth is off" {
     var frames: bedrock.Frames = try .init(bedrock.current_version + 1);
     defer frames.deinit();

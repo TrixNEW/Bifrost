@@ -163,8 +163,8 @@ pub fn forwardToBackend(self: *Link, message: NetherNet.Message) !void {
     defer self.publishState();
     const payload = message.data;
     if (message.reliability != .reliable) {
-        // Bedwire only speaks the reliable channel, so only passthrough can carry these
-        if (self.managed == null) if (self.backend) |*backend| return backend.sendAs(payload, .unreliable);
+        // Bedwire only speaks the reliable channel, so only passthrough can carry these, and only once the Login is through
+        if (self.managed == null and !self.observer.?.watching) if (self.backend) |*backend| return backend.sendAs(payload, .unreliable);
         self.env.stats.bump(.unreliable_dropped, 1);
         return;
     }

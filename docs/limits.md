@@ -32,6 +32,11 @@ transport notices a dead peer.
 A handshake over these limits gets HTTP 503 before any WebRTC state is created. ICE and DTLS must finish within
 `connect_timeout_ms` of the answer. Players behind one NAT share the per-IP counts, IPv6 counts per /64 and loopback is exempt.
 
+Players are expected to reach the signaling port directly. Forwarding headers such as `X-Forwarded-For` are not
+trusted, so behind another HTTP proxy or CDN every player shares that proxy's address and the per-IP limits apply to
+all of them together. `max_negotiations_per_ip` can be raised for that, but the per-IP connection cap is fixed, so
+such a setup is not supported.
+
 `[server] max_players_per_ip` counts the address ICE settled on, so players behind one NAT or relayed through
 one TURN server share it, and IPv6 players share their /64. A player whose address ICE can't report only counts against `max_players`.
 

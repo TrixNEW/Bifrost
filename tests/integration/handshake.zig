@@ -93,7 +93,7 @@ test "verify mode turns away players that can't prove a key" {
     try running.start(io, try fixtures.config(&.{backend.address()}), .{ .auth = .{ .verify = &keys } });
     defer running.deinit();
 
-    try std.testing.expectError(error.HttpFailure, Player.connect(io, running.address()));
+    try std.testing.expectError(error.Forbidden, Player.connect(io, running.address()));
     try std.testing.expectEqual(@as(u32, 0), backend.connects.load(.acquire));
 }
 

@@ -287,8 +287,7 @@ fn routeGameplay(context: *anyopaque, link_id: u64, query: Handles.Query) abi.St
         if (query == .client_data) {
             query.client_data.* = .of(json);
         } else {
-            var parsed = bedwire.auth.jwt.parseJson(self.gpa, query.set_client_data, Managed.limits) catch |err| return if (err == error.OutOfMemory) .failed else .invalid_argument;
-            defer parsed.deinit();
+            Managed.checkClientData(self.gpa, query.set_client_data) catch |err| return if (err == error.OutOfMemory) .failed else .invalid_argument;
             const replacement = self.gpa.dupe(u8, query.set_client_data) catch return .failed;
             self.gpa.free(json);
             managed.client_data = replacement;

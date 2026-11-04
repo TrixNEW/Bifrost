@@ -738,7 +738,27 @@ fn clientData(gpa: std.mem.Allocator, login: @FieldType(protocol.typed.Packet, "
     const json = try gpa.alloc(u8, size);
     errdefer gpa.free(json);
     decoder.decode(json, encoded) catch return error.InvalidClaims;
+    try checkClientData(gpa, json);
     return json;
+}
+
+// The proxy key signs ClientData as is, so it must never also read as a chain link or a transport proof
+const reserved_claims = [_][]const u8{ "identityPublicKey", "extraData", "certificateAuthority", "fingerprint", "cpk" };
+
+pub fn checkClientData(gpa: std.mem.Allocator, json: []const u8) !void {
+    var parsed = try bedwire.auth.jwt.parseJson(gpa, json, limits);
+    defer parsed.deinit();
+    for (reserved_claims) |claim| if (parsed.value.object.contains(claim)) return error.InvalidClaims;
+}
+
+test "client data that could pass for another signed claim is refused" {
+    const gpa = std.testing.allocator;
+    try checkClientData(gpa, "{\"DeviceId\":\"x\",\"SkinData\":\"\",\"ClientRandomId\":1}");
+    try std.testing.expectError(error.InvalidClaims, checkClientData(gpa, "{\"fingerprint\":[{\"algorithm\":\"sha-256\",\"digest\":\"AA\"}]}"));
+    try std.testing.expectError(error.InvalidClaims, checkClientData(gpa, "{\"identityPublicKey\":\"k\",\"extraData\":{\"XUID\":\"1\"}}"));
+    try std.testing.expectError(error.InvalidClaims, checkClientData(gpa, "{\"DeviceId\":\"x\",\"extraData\":{}}"));
+    try std.testing.expectError(error.InvalidJson, checkClientData(gpa, "[1]"));
+    try std.testing.expectError(error.InvalidJson, checkClientData(gpa, "\"text\""));
 }
 
 test "failed managed batches release replacement storage before the next player" {

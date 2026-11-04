@@ -504,7 +504,9 @@ WRONG_THREAD and stale player handles receive STALE_HANDLE.
 
 The getter borrows the verified client JSON until the callback ends or the setter
 succeeds. The setter validates a JSON object with the existing 1 MiB and nesting
-limits, then copies it before replacing the previous data. Invalid input and
+limits that has none of the `identityPublicKey`, `extraData`, `certificateAuthority`, `fingerprint`
+or `cpk` claims, since the proxy key signs it, then copies it before replacing the previous data. Players whose
+Login carries these claims are rejected the same way. Invalid input and
 allocation failures leave the previous value intact. The authenticated identity
 is separate. Future downstream logins are signed with the updated client data.
 Bifrost does not impose a skin policy. Plugins own validation and any skin

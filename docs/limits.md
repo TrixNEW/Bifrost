@@ -25,14 +25,15 @@ transport notices a dead peer.
 |---|---|---|---|
 | NetherNet handshakes in flight | whole proxy | `[nethernet] max_negotiations` | 32 |
 | the same, from one IP | whole proxy | `[nethernet] max_negotiations_per_ip` | 4 |
-| one HTTP signaling request | per request | fixed | 15 s, 1 MiB offer |
+| one HTTP signaling request | per request | fixed | 15 s, 5 s to send it, 1 MiB offer |
+| open HTTP signaling connections from one IP | whole proxy | fixed | 8 |
 | finished handshakes waiting for a worker | per worker | fixed | 64 |
 
 A handshake over these limits gets HTTP 503 before any WebRTC state is created. ICE and DTLS must finish within
-`connect_timeout_ms` of the answer. Players behind one NAT share the per-IP count.
+`connect_timeout_ms` of the answer. Players behind one NAT share the per-IP counts, IPv6 counts per /64 and loopback is exempt.
 
 `[server] max_players_per_ip` counts the address ICE settled on, so players behind one NAT or relayed through
-one TURN server share it. A player whose address ICE can't report only counts against `max_players`.
+one TURN server share it, and IPv6 players share their /64. A player whose address ICE can't report only counts against `max_players`.
 
 ## Memory
 

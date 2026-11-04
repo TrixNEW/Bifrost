@@ -53,10 +53,13 @@ fn unknown(address: IpAddress) bool {
     return std.mem.allEqual(u8, &key(address), 0) or std.mem.eql(u8, &key(address), &key(.{ .ip4 = .unspecified(0) }));
 }
 
+const mapped_prefix = @as([10]u8, @splat(0)) ++ [_]u8{ 0xff, 0xff };
+
+// IPv6 counts per /64, since one subscriber is handed a whole /64 to pick addresses from
 fn key(address: IpAddress) [16]u8 {
     return switch (address) {
-        .ip4 => |ip4| @as([10]u8, @splat(0)) ++ [_]u8{ 0xff, 0xff } ++ ip4.bytes,
-        .ip6 => |ip6| ip6.bytes,
+        .ip4 => |ip4| mapped_prefix ++ ip4.bytes,
+        .ip6 => |ip6| if (std.mem.startsWith(u8, &ip6.bytes, &mapped_prefix)) ip6.bytes else ip6.bytes[0..8].* ++ @as([8]u8, @splat(0)),
     };
 }
 
@@ -91,6 +94,26 @@ test "caps players per address, ignoring the port" {
     admission.leave(io, elsewhere);
     try std.testing.expectEqual(@as(usize, 0), admission.by_address.count());
     try std.testing.expectEqual(@as(u32, 0), admission.active.load(.monotonic));
+}
+
+test "IPv6 players share their /64, while mapped IPv4 stays per address" {
+    const io = std.testing.io;
+    var admission: Admission = try .init(std.testing.allocator, 10, 1);
+    defer admission.deinit();
+    const home = try IpAddress.parseLiteral("[2001:db8:1:2::1]:1");
+    const same_home = try IpAddress.parseLiteral("[2001:db8:1:2:aaaa:bbbb:cccc:dddd]:2");
+    const neighbour = try IpAddress.parseLiteral("[2001:db8:1:3::1]:1");
+    const mapped = try IpAddress.parseLiteral("[::ffff:10.0.0.1]:1");
+    const mapped_elsewhere = try IpAddress.parseLiteral("[::ffff:10.0.0.2]:1");
+
+    try admission.enter(io, home);
+    try std.testing.expectError(error.TooManyFromAddress, admission.enter(io, same_home));
+    try admission.enter(io, neighbour);
+    try admission.enter(io, mapped);
+    try admission.enter(io, mapped_elsewhere);
+    try std.testing.expectError(error.TooManyFromAddress, admission.enter(io, .{ .ip4 = .{ .bytes = .{ 10, 0, 0, 1 }, .port = 3 } }));
+    for ([_]IpAddress{ same_home, neighbour, mapped, mapped_elsewhere }) |player| admission.leave(io, player);
+    try std.testing.expectEqual(@as(usize, 0), admission.by_address.count());
 }
 
 test "players without a known address are only held to the global limit" {

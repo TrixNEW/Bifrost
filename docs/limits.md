@@ -31,6 +31,9 @@ transport notices a dead peer.
 A handshake over these limits gets HTTP 503 before any WebRTC state is created. ICE and DTLS must finish within
 `connect_timeout_ms` of the answer. Players behind one NAT share the per-IP count.
 
+`[server] max_players_per_ip` counts the address ICE settled on, so players behind one NAT or relayed through
+one TURN server share it. A player whose address ICE can't report only counts against `max_players`.
+
 ## Memory
 
 | what | scope | limit | default |
@@ -67,7 +70,8 @@ limits above.
 | ICE, DTLS and SCTP | whole proxy | `[nethernet] threads` | one per core, up to 4 |
 
 A throttled login is told the server is busy (managed mode) before any signature is checked. A player over their
-byte rate is disconnected as a flood; in passthrough this only applies until the Login is through. Batches
+byte rate is disconnected as a flood; in passthrough this only applies until the Login is through, and
+unreliable messages are dropped until then, since the meter and the Login check only see the reliable channel. Batches
 relayed without decompressing, and anything the backend sends, are not metered. The opaque relay never inflates a
 compressed batch. Plugin transfer and action calls past `max_concurrent` get `BUSY`.
 

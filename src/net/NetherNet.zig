@@ -154,12 +154,25 @@ fn dialToken(self: *const NetherNet, now: i64) ![]u8 {
 
 /// The UDP address ICE settled on, if libdatachannel can tell.
 pub fn remoteAddress(connection: *Connection) ?std.Io.net.IpAddress {
-    var local: [64]u8 = undefined;
-    var remote: [64]u8 = undefined;
+    var local: [128]u8 = undefined;
+    var remote: [128]u8 = undefined;
     const pair = (connection.selectedIceAddresses(&local, &remote) catch return null) orelse return null;
-    return std.Io.net.IpAddress.parseLiteral(pair.remote) catch {
-        const colon = std.mem.lastIndexOfScalar(u8, pair.remote, ':') orelse return null;
-        const port = std.fmt.parseInt(u16, pair.remote[colon + 1 ..], 10) catch return null;
-        return std.Io.net.IpAddress.parse(pair.remote[0..colon], port) catch null;
+    return parseCandidateAddress(pair.remote);
+}
+
+fn parseCandidateAddress(text: []const u8) ?std.Io.net.IpAddress {
+    return std.Io.net.IpAddress.parseLiteral(text) catch {
+        const colon = std.mem.lastIndexOfScalar(u8, text, ':') orelse return null;
+        const port = std.fmt.parseInt(u16, text[colon + 1 ..], 10) catch return null;
+        const host = std.mem.trimEnd(u8, std.mem.trimStart(u8, text[0..colon], "["), "]");
+        return std.Io.net.IpAddress.parse(host, port) catch null;
     };
+}
+
+test "candidate addresses parse with or without brackets" {
+    const v4 = parseCandidateAddress("203.0.113.7:19132").?;
+    try std.testing.expectEqual(@as(u16, 19132), v4.getPort());
+    try std.testing.expectEqual(@as(u16, 5), parseCandidateAddress("[2001:db8::1]:5").?.getPort());
+    try std.testing.expect(parseCandidateAddress("nonsense") == null);
+    try std.testing.expect(parseCandidateAddress("1.2.3.4:99999") == null);
 }

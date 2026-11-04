@@ -28,7 +28,7 @@ pub fn enter(self: *Admission, io: std.Io, address: IpAddress) Refusal!void {
     defer self.mutex.unlock(io);
     const active = self.active.load(.monotonic);
     if (active >= self.limit) return error.ServerFull;
-    if (self.per_address != 0) {
+    if (self.per_address != 0 and !unknown(address)) {
         const entry = self.by_address.getOrPutAssumeCapacity(key(address));
         if (!entry.found_existing) entry.value_ptr.* = 0;
         if (entry.value_ptr.* >= self.per_address) return error.TooManyFromAddress;
@@ -40,12 +40,17 @@ pub fn enter(self: *Admission, io: std.Io, address: IpAddress) Refusal!void {
 pub fn leave(self: *Admission, io: std.Io, address: IpAddress) void {
     self.mutex.lockUncancelable(io);
     defer self.mutex.unlock(io);
-    if (self.per_address != 0) {
+    if (self.per_address != 0 and !unknown(address)) {
         const entry = self.by_address.getEntry(key(address)).?;
         entry.value_ptr.* -= 1;
         if (entry.value_ptr.* == 0) _ = self.by_address.swapRemove(key(address));
     }
     self.active.store(self.active.load(.monotonic) - 1, .monotonic);
+}
+
+// Players ICE couldn't place only count globally, rather than all crowding into one address's share
+fn unknown(address: IpAddress) bool {
+    return std.mem.allEqual(u8, &key(address), 0) or std.mem.eql(u8, &key(address), &key(.{ .ip4 = .unspecified(0) }));
 }
 
 fn key(address: IpAddress) [16]u8 {
@@ -85,6 +90,18 @@ test "caps players per address, ignoring the port" {
     for (0..2) |_| admission.leave(io, home);
     admission.leave(io, elsewhere);
     try std.testing.expectEqual(@as(usize, 0), admission.by_address.count());
+    try std.testing.expectEqual(@as(u32, 0), admission.active.load(.monotonic));
+}
+
+test "players without a known address are only held to the global limit" {
+    const io = std.testing.io;
+    var admission: Admission = try .init(std.testing.allocator, 3, 1);
+    defer admission.deinit();
+    const nowhere: IpAddress = .{ .ip4 = .unspecified(0) };
+    for (0..3) |_| try admission.enter(io, nowhere);
+    try std.testing.expectError(error.ServerFull, admission.enter(io, nowhere));
+    try std.testing.expectEqual(@as(usize, 0), admission.by_address.count());
+    for (0..3) |_| admission.leave(io, nowhere);
     try std.testing.expectEqual(@as(u32, 0), admission.active.load(.monotonic));
 }
 

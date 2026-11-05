@@ -50,6 +50,12 @@ Configure the proxy through [`config/bifrost.toml`](config/bifrost.toml). [Resou
 explains the timeouts, budgets and rate limits. Set `metrics = "127.0.0.1:9100"` under `[server]` to serve
 Prometheus metrics at `/metrics`.
 
+### Pterodactyl
+
+To host Bifrost using Pterodactyl, import the [Bifrost egg](https://github.com/Bedrock-Phanatics/pterodactyl-eggs/blob/main/bifrost-pterodactyl-egg.json) from the [Bedrock-Phanatics Pterodactyl Eggs](https://github.com/Bedrock-Phanatics/pterodactyl-eggs) repository.
+
+See the [setup guide](https://github.com/Bedrock-Phanatics/pterodactyl-eggs#bifrost-egg) for installation, configuration, and known limitations.
+
 ### Networking
 
 | Port | Protocol | Purpose |

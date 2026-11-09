@@ -1283,3 +1283,47 @@ Managed, 256 B 8x32 from the same run: passthrough 11506, managed relayed 9752, 
 
 The first quick run let only 8 of 100 and 117 of 500 bench players in: every bench player dials from 127.0.0.1
 and `max_negotiations_per_ip` defaults to 4. The bench proxy now raises both negotiation limits.
+
+## Dependency and codec audit, 2.0.0-rc.10
+
+Recorded 2026-11-08 on Windows 11, 12 logical CPUs, Zig 0.17.0, ReleaseFast, with other desktop apps running.
+Bedwire 0.4.0 -> 0.5.6, nethernet 1.7.0 -> 1.9.0 and zio moved from the EuroZig pre-merge branch to upstream
+lalinsky/zio 0.19.0, which now targets Zig 0.17 and carries the batch callback use-after-free and IOCP accept and
+connect fixes. Bedwire 0.6 and later drop protocol-zig from sessions and move to Minecraft 1.26.60, which is a
+separate migration.
+
+Bedwire's libdeflate backend was never switched on, so managed sessions used std's flate. It is now the default
+(`-Dlibdeflate=false` goes back) at level 1. Bifrost already links libc, and each worker keeps one compressor and
+one decompressor, so the memory cost is small. `-- deflate --quick`, one batch in process, us per batch, two runs:
+
+| data | size | pure Zig encode / decode | libdeflate encode / decode |
+|---|---|---|---|
+| game | 256 B | 0.25-0.32 / 0.71-0.83 | 4.22-4.48 / 0.24-0.27 |
+| game | 512 B | 0.42-0.51 / 0.93-0.96 | 4.18-5.13 / 0.32-0.33 |
+| game | 1 KiB | 15.9-16.0 / 1.44-1.50 | 4.90-5.03 / 0.53-0.63 |
+| game | 8 KiB | 53.6-56.4 / 10.3-12.5 | 16.6-18.2 / 4.50-4.51 |
+| game | 64 KiB | 289-321 / 48.2-52.0 | 72.7-94.8 / 14.6-16.2 |
+| noise | 8 KiB | 103-109 / 46.9-48.4 | 22.9-25.1 / 0.19-0.32 |
+| noise | 64 KiB | 1263-1418 / 356-389 | 360-365 / 2.18-2.60 |
+
+Output sizes are the same on game data and up to 5 points smaller on noise. Up to 512 B Bedwire's pure Zig encoder
+writes one fixed Huffman block, which libdeflate can't match: a 256 to 512 B batch costs about 3 us more per
+decode and encode. From 1 KiB up the round trip is 3 to 4 times faster. libdeflate level 3 gave the same output as
+level 1 here at 1.3 to 2 times the encode time.
+
+End to end, `-- managed --quick` alternating pure Zig and libdeflate proxies against one driver couldn't separate
+them: passthrough and relayed rows, which never touch the codec, moved 8 to 25% between runs, and libdatachannel
+dominates proxy CPU. Treat the table above as the evidence and the managed rows as unchanged within noise.
+
+Rejected:
+
+- baskingspot/fastmem: its AVX2 copy beats ucrt and compiler-rt by 1.1 to 2.3 times in isolation (16 B to 1 MiB,
+  aligned and misaligned), move and set are level. Bifrost forwards payload slices straight to libdatachannel, which
+  copies with its own libc, and the remaining Zig copies are small or once per login. The export layer that would
+  replace memcpy everywhere is ELF only.
+- baskingspot/compress: builds with Zig 0.16 only. Its DEFLATE would replace the libdeflate backend above, which
+  Bedwire already vendors and tests.
+- baskingspot/stdx, http and tls, zmath, zBench: nothing on Bifrost's paths needs them. Config, HTTP signaling and
+  DTLS belong to zig-toml, nethernet and libdatachannel.
+- libxev: zio covers the event loop and Bifrost's own I/O is limited to signaling and health probes.
+- zig-gamedev/ztracy: `-Dtracy=true` already builds Tracy's client directly, see the allocation audit above.

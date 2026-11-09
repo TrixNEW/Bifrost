@@ -10,6 +10,7 @@ const Context = struct {
     zio: *std.Build.Module,
     native_prefix: []const u8,
     sanitize_thread: bool,
+    libdeflate: bool,
 
     fn module(self: Context, path: []const u8, imports: []const std.Build.Module.Import) *std.Build.Module {
         return self.b.createModule(.{ .root_source_file = self.b.path(path), .target = self.target, .optimize = self.optimize, .imports = imports });
@@ -60,9 +61,10 @@ pub fn build(b: *std.Build) void {
         .native_prefix = b.option([]const u8, "native-prefix", "Where tools/setup-native installed libdatachannel") orelse
             (b.root.joinString(b.allocator, ".deps/native") catch @panic("out of memory")),
         .sanitize_thread = b.option(bool, "sanitize-thread", "Instrument Bifrost and nethernet with TSan, see tools/tsan.sh") orelse false,
+        .libdeflate = b.option(bool, "libdeflate", "Compress managed sessions with libdeflate instead of std's flate") orelse true,
     };
     ctx.nethernet = b.dependency("nethernet", .{ .target = ctx.target, .optimize = ctx.optimize, .@"native-prefix" = ctx.native_prefix, .@"sanitize-thread" = ctx.sanitize_thread }).module("nethernet");
-    ctx.bedwire = ctx.dependency("bedwire", "bedwire");
+    ctx.bedwire = b.dependency("bedwire", .{ .target = ctx.target, .optimize = ctx.optimize, .libdeflate = ctx.libdeflate }).module("bedwire");
     ctx.zio = ctx.dependency("zio", "zio");
     ctx.bifrost = b.addModule("bifrost", .{
         .root_source_file = b.path("src/root.zig"),
@@ -264,6 +266,7 @@ fn addBench(ctx: Context, packet_filter: *std.Build.Step.Compile) void {
     const scheduling = b.option(enum { work_stealing, pinned }, "scheduling", "ZIO scheduling of the benchmarked proxy (default: work_stealing)") orelse .work_stealing;
     const options = b.addOptions();
     options.addOption([]const u8, "scheduling", @tagName(scheduling));
+    options.addOption(bool, "libdeflate", ctx.libdeflate);
     options.addOptionPath("packet_filter", packet_filter.getEmittedBin());
     const imports: []const std.Build.Module.Import = &.{
         .{ .name = "bifrost", .module = ctx.bifrost },
@@ -285,8 +288,8 @@ fn addBench(ctx: Context, packet_filter: *std.Build.Step.Compile) void {
         .scheduling = scheduling,
     }).module("zio"));
     const compile = b.step("bench-build", "Build the benchmark driver and proxy");
-    compile.dependOn(&driver.step);
-    compile.dependOn(&proxy.step);
+    compile.dependOn(&b.addInstallArtifact(driver, .{}).step);
+    compile.dependOn(&b.addInstallArtifact(proxy, .{}).step);
     const run = b.addRunArtifact(driver);
     ctx.native(run);
     run.addArg("--proxy-exe");

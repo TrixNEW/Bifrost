@@ -1041,31 +1041,31 @@ fn managedScenario(env: *Env) !void {
     try env.out.print("\n", .{});
 }
 
-const deflate_levels = [_]struct { name: []const u8, options: std.compress.flate.Compress.Options }{
-    .{ .name = "1", .options = .level_1 },
-    .{ .name = "4", .options = .level_4 },
-    .{ .name = "6 (used)", .options = .level_6 },
-    .{ .name = "9", .options = .level_9 },
-};
-
 fn deflateScenario(env: *Env) !void {
+    const flate = @import("bedwire").compression.flate;
     try env.out.print(
         \\
-        \\## Deflate levels
+        \\## Session deflate
         \\
-        \\In-process raw deflate of one batch, for comparison only; Bedwire compresses at level 6. "Game" repeats a
-        \\structured 64 B record with a few changing bytes, "noise" is random.
+        \\In-process raw deflate of one batch with Bedwire's session codec, {s} level 1 as managed sessions use it.
+        \\"Game" repeats a structured 64 B record with a few changing bytes, "noise" is random.
         \\
-        \\| data | size | level | us per batch | MiB/s | output |
+        \\| data | size | encode us | decode us | encode MiB/s | output |
         \\|---|---|---|---|---|---|
         \\
-    , .{});
+    , .{if (bench_options.libdeflate) "libdeflate" else "pure Zig"});
     const input = try env.gpa.alloc(u8, 64 * 1024);
     defer env.gpa.free(input);
     const output = try env.gpa.alloc(u8, 128 * 1024);
     defer env.gpa.free(output);
-    const history = try env.gpa.create([std.compress.flate.max_window_len]u8);
+    const restored = try env.gpa.alloc(u8, 64 * 1024);
+    defer env.gpa.free(restored);
+    const history = try env.gpa.create([flate.history_len]u8);
     defer env.gpa.destroy(history);
+    const encoder: flate.Encoder = try .initLevel(env.gpa, 1);
+    defer encoder.deinit();
+    const decoder: flate.Decoder = try .init(env.gpa);
+    defer decoder.deinit();
     var prng: std.Random.DefaultPrng = .init(0xdef1a7e);
     for ([_]bool{ true, false }) |game| {
         if (game) {
@@ -1073,24 +1073,27 @@ fn deflateScenario(env: *Env) !void {
             var i: usize = 0;
             while (i < input.len) : (i += 64) prng.random().bytes(input[i..][0..4]);
         } else prng.random().bytes(input);
-        for ([_]usize{ 1024, 8 * 1024, 64 * 1024 }) |size| for (deflate_levels) |level| {
-            const mib_per_level: usize = if (env.quick) 4 else 16;
-            const rounds = @max(4, mib_per_level * 1024 * 1024 / size);
-            var len: usize = 0;
-            const started = nowNs(env.io);
+        for ([_]usize{ 256, 512, 1024, 8 * 1024, 64 * 1024 }) |size| {
+            const rounds = @max(4, (if (env.quick) @as(usize, 4) else 16) * 1024 * 1024 / size);
+            var compressed: []u8 = &.{};
+            var started = nowNs(env.io);
+            for (0..rounds) |_| compressed = try encoder.compress(input[0..size], output, history);
+            const encode_ns = @as(f64, @floatFromInt(nowNs(env.io) - started)) / @as(f64, @floatFromInt(rounds));
+            started = nowNs(env.io);
             for (0..rounds) |_| {
-                var writer: std.Io.Writer = .fixed(output);
-                var compressor: std.compress.flate.Compress = try .init(&writer, history, .raw, level.options);
-                try compressor.writer.writeAll(input[0..size]);
-                try compressor.finish();
-                len = writer.end;
+                const plain = try decoder.decompress(compressed, restored, history, .{});
+                if (!std.mem.eql(u8, plain, input[0..size])) return error.CorruptRoundTrip;
             }
-            const ns = @as(f64, @floatFromInt(nowNs(env.io) - started)) / @as(f64, @floatFromInt(rounds));
-            try env.out.print("| {s} | {Bi} | {s} | {d:.1} | {d:.0} | {d:.1}% |\n", .{
-                if (game) "game" else "noise",                 size,                                                               level.name, ns / 1000,
-                mib(@as(f64, @floatFromInt(size))) * 1e9 / ns, @as(f64, @floatFromInt(len)) * 100 / @as(f64, @floatFromInt(size)),
+            const decode_ns = @as(f64, @floatFromInt(nowNs(env.io) - started)) / @as(f64, @floatFromInt(rounds));
+            try env.out.print("| {s} | {Bi} | {d:.2} | {d:.2} | {d:.0} | {d:.1}% |\n", .{
+                if (game) "game" else "noise",
+                size,
+                encode_ns / 1000,
+                decode_ns / 1000,
+                mib(@as(f64, @floatFromInt(size))) * 1e9 / encode_ns,
+                @as(f64, @floatFromInt(compressed.len)) * 100 / @as(f64, @floatFromInt(size)),
             });
-        };
+        }
     }
 }
 

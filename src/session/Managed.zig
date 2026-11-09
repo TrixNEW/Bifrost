@@ -73,7 +73,8 @@ pub const Shared = struct {
     player_bytes_per_second: u32 = 0,
 
     pub fn init(gpa: std.mem.Allocator, key: Ecdsa.KeyPair, keys: *const bedwire.auth.KeySet) !Shared {
-        var pool: bedwire.BufferPool = try .init(gpa, limits, .{ .rx_slots = 1, .tx_slots = 1 });
+        // libdeflate's level 1 is about twice as fast as its level 3 with the same output on game traffic
+        var pool: bedwire.BufferPool = try .init(gpa, limits, .{ .rx_slots = 1, .tx_slots = 1, .deflate_level = 1 });
         errdefer pool.deinit();
         return .{ .pool = pool, .key = key, .keys = keys, .batch = try gpa.alloc([]const u8, limits.max_packets_per_batch), .translated = .init(gpa) };
     }

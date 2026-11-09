@@ -111,3 +111,6 @@ zig build bench -Doptimize=ReleaseFast
 
 `-Dtracy=true` builds with [Tracy](https://github.com/wolfpld/tracy) v0.13 profiler zones. Leave it off for
 production; disabled zones compile to nothing and Tracy isn't fetched.
+
+Managed sessions compress with libdeflate, compiled from Bedwire's vendored copy. `-Dlibdeflate=false` uses std's
+flate instead, which is faster only for batches under 512 B.

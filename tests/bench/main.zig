@@ -1079,12 +1079,11 @@ fn deflateScenario(env: *Env) !void {
             var started = nowNs(env.io);
             for (0..rounds) |_| compressed = try encoder.compress(input[0..size], output, history);
             const encode_ns = @as(f64, @floatFromInt(nowNs(env.io) - started)) / @as(f64, @floatFromInt(rounds));
+            var plain: []const u8 = &.{};
             started = nowNs(env.io);
-            for (0..rounds) |_| {
-                const plain = try decoder.decompress(compressed, restored, history, .{});
-                if (!std.mem.eql(u8, plain, input[0..size])) return error.CorruptRoundTrip;
-            }
+            for (0..rounds) |_| plain = try decoder.decompress(compressed, restored, history, .{});
             const decode_ns = @as(f64, @floatFromInt(nowNs(env.io) - started)) / @as(f64, @floatFromInt(rounds));
+            if (!std.mem.eql(u8, plain, input[0..size])) return error.CorruptRoundTrip;
             try env.out.print("| {s} | {Bi} | {d:.2} | {d:.2} | {d:.0} | {d:.1}% |\n", .{
                 if (game) "game" else "noise",
                 size,

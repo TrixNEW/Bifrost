@@ -1298,18 +1298,18 @@ one decompressor, so the memory cost is small. `-- deflate --quick`, one batch i
 
 | data | size | pure Zig encode / decode | libdeflate encode / decode |
 |---|---|---|---|
-| game | 256 B | 0.25-0.32 / 0.71-0.83 | 4.22-4.48 / 0.24-0.27 |
-| game | 512 B | 0.42-0.51 / 0.93-0.96 | 4.18-5.13 / 0.32-0.33 |
-| game | 1 KiB | 15.9-16.0 / 1.44-1.50 | 4.90-5.03 / 0.53-0.63 |
-| game | 8 KiB | 53.6-56.4 / 10.3-12.5 | 16.6-18.2 / 4.50-4.51 |
-| game | 64 KiB | 289-321 / 48.2-52.0 | 72.7-94.8 / 14.6-16.2 |
-| noise | 8 KiB | 103-109 / 46.9-48.4 | 22.9-25.1 / 0.19-0.32 |
-| noise | 64 KiB | 1263-1418 / 356-389 | 360-365 / 2.18-2.60 |
+| game | 256 B | 0.21-0.22 / 0.65-0.70 | 3.71-3.75 / 0.25-0.26 |
+| game | 512 B | 0.36-0.37 / 0.86-0.98 | 3.84-3.94 / 0.33 |
+| game | 1 KiB | 14.5-14.6 / 1.26-1.27 | 4.34-4.47 / 0.42 |
+| game | 8 KiB | 46.4-46.8 / 9.35-9.40 | 11.4-11.8 / 3.50-3.65 |
+| game | 64 KiB | 256 / 44.7-44.9 | 59.9-60.6 / 13.2-14.2 |
+| noise | 8 KiB | 93.6-95.6 / 42.6 | 19.3 / 0.09 |
+| noise | 64 KiB | 1094-1112 / 324-325 | 344-346 / 1.13-1.15 |
 
-Output sizes are the same on game data and up to 5 points smaller on noise. Up to 512 B Bedwire's pure Zig encoder
-writes one fixed Huffman block, which libdeflate can't match: a 256 to 512 B batch costs about 3 us more per
-decode and encode. From 1 KiB up the round trip is 3 to 4 times faster. libdeflate level 3 gave the same output as
-level 1 here at 1.3 to 2 times the encode time.
+Output sizes are the same on game data and up to 5 points smaller on noise below 1 KiB. Up to 512 B Bedwire's
+pure Zig encoder writes one fixed Huffman block, which libdeflate can't match: a 256 to 512 B batch costs about 3 us
+more per round trip. From 1 KiB up the round trip is 3 to 4 times faster. libdeflate level 3 gave the same output
+as level 1 here at 1.3 to 2 times the encode time.
 
 End to end, `-- managed --quick` alternating pure Zig and libdeflate proxies against one driver couldn't separate
 them: passthrough and relayed rows, which never touch the codec, moved 8 to 25% between runs, and libdatachannel

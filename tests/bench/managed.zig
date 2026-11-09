@@ -83,9 +83,15 @@ pub fn join(gpa: std.mem.Allocator, io: std.Io, player: *harness.Player, address
     try expectKind(session, try next(connection), .play_status);
     try bedrock.send(connection, try sample.typedPacket(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .resource_pack_stack_finished = "" } } }));
     try session.advance(.waiting_for_start_game);
-    try expectKind(session, try next(connection), .start_game);
+    const runtime_id = blk: {
+        var packets = try session.ingest(try next(connection));
+        defer packets.deinit();
+        const start = packets.next() orelse return error.NoPacket;
+        if (start.kind != .start_game) return error.UnexpectedPacket;
+        break :blk (try session.decodePacket(start)).value.typed.start_game.runtime_id;
+    };
     try session.advance(.spawn_ready);
-    try bedrock.send(connection, try sample.rawPacket(&buffer, Current.packetId(.set_local_player_as_initialised).?, &.{1}));
+    try bedrock.send(connection, try sample.typedPacket(&buffer, .{ .set_local_player_as_initialised = .{ .player_id = runtime_id } }));
     try session.advance(.in_game);
     player.bedrock = bedrock;
 }
@@ -201,7 +207,8 @@ pub const Backend = struct {
                 } });
                 identity.deinit();
                 try session.advance(.resource_packs);
-                try send(session, client, &.{try sample.typedPacket(&buffer, .{ .play_status = .{ .status = .loginsuccess } })});
+                var stack: [128]u8 = undefined;
+                try send(session, client, &.{ try sample.typedPacket(&buffer, .{ .play_status = .{ .status = .loginsuccess } }), try sample.packStack(&stack, .{}) });
             },
             .resource_pack_client_response => {
                 try session.advance(.waiting_for_start_game);
@@ -211,6 +218,7 @@ pub const Backend = struct {
                     try sample.startGame(&start_buffer, .{}),
                     try sample.itemRegistry(&items_buffer, .{}),
                     &sample.biome_definitions,
+                    try sample.typedPacket(buffer[0..16], .{ .play_status = .{ .status = .playerspawn } }),
                 });
                 try session.advance(.spawn_ready);
             },

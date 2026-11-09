@@ -27,7 +27,7 @@ bosses: std.ArrayList(i64) = .empty,
 objective_bytes: std.ArrayList(u8) = .empty,
 objective_lengths: std.ArrayList(u16) = .empty,
 effects: std.StaticBitSet(max_effects) = .empty,
-container: ?struct { id: u8, kind: u8 } = null,
+container: ?struct { id: i8, kind: i8 } = null,
 own_runtime_id: u64 = 0,
 fog: bool = false,
 input_locked: bool = false,
@@ -266,6 +266,20 @@ test "a closed container is not closed again" {
     state.containerClosed();
     var kinds: [4]bedwire.PacketKind = undefined;
     try std.testing.expectEqualSlices(bedwire.PacketKind, &.{.stop_sound}, try resetKinds(&state, &kinds));
+}
+
+test "the player's own inventory closes with its signed container type" {
+    var state: ClientState = .{};
+    defer state.deinit(std.testing.allocator);
+    try observed(&state, .{ .container_open = .{ .container_id = -1, .container_type = -1, .position = .{ .x = 0, .y = 0, .z = 0 }, .target_actor_id = -1 } });
+    var outbox: Outbox = .init(std.testing.allocator);
+    defer outbox.deinit();
+    try state.reset(&outbox);
+    var packets_out: [4][]const u8 = undefined;
+    const close = try Current.decodeBorrowed(outbox.slices(0, &packets_out)[0], .{});
+    const fields = close.value.typed.container_close;
+    try std.testing.expectEqual(@as(i8, -1), fields.container_id);
+    try std.testing.expectEqual(@as(i8, -1), fields.container_type);
 }
 
 test "tracking stops at its bounds and says so" {

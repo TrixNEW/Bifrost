@@ -57,6 +57,7 @@ pub const Player = struct {
     commands: ?[]u8 = null,
     hold_acks: bool = false,
     held_acks: usize = 0,
+    runtime_id: u64 = 0,
 
     pub fn connect(io: std.Io, address: IpAddress, seed: u8) !*Player {
         const self = try gpa.create(Player);
@@ -129,12 +130,13 @@ pub const Player = struct {
         var buffer: [64]u8 = undefined;
         try self.send(&.{try typedPacket(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .resource_pack_stack_finished = "" } } })});
         try self.session.advance(.waiting_for_start_game);
-        {
+        self.runtime_id = blk: {
             var packets = try self.receive();
             defer packets.deinit();
             const start = packets.next() orelse return error.NoPacket;
             if (start.kind != .start_game) return error.UnexpectedPacket;
-        }
+            break :blk (try self.session.decodePacket(start)).value.typed.start_game.runtime_id;
+        };
         try self.session.advance(.spawn_ready);
         try self.send(&.{try typedPacket(&buffer, .{ .request_chunk_radius = .{ .chunk_radius = 8, .max_chunk_radius = 12 } })});
         while (true) {
@@ -145,7 +147,7 @@ pub const Player = struct {
             } else false;
             if (spawned) break;
         }
-        try self.send(&.{try rawPacket(&buffer, Current.packetId(.set_local_player_as_initialised).?, &.{1})});
+        try self.send(&.{try typedPacket(&buffer, .{ .set_local_player_as_initialised = .{ .player_id = self.runtime_id } })});
         try self.session.advance(.in_game);
     }
 

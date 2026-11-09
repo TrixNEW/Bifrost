@@ -818,7 +818,7 @@ test "canceling a spawn milestone preserves the packet listener phase until it i
 
     StateHook.block_spawn.store(false, .release);
     var buffer: [16]u8 = undefined;
-    try rig.player.send(&.{try managed.typedPacket(&buffer, .{ .set_local_player_as_initialised = .{ .player_id = 1 } })});
+    try rig.player.send(&.{try managed.typedPacket(&buffer, .{ .set_local_player_as_initialised = .{ .player_id = rig.player.runtime_id } })});
     try rig.player.echo("after spawn");
     try std.testing.expectEqual(before + 1, StateHook.before_game.load(.acquire));
     try std.testing.expectEqual(after + 1, StateHook.in_game.load(.acquire));

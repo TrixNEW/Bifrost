@@ -13,8 +13,8 @@
             .hash = "bedwire-0.5.6-6vrYrej1HwAhQvRbEwUH8gfvc5Ys6uaZIO6b2OyWwt2m",
         },
         .zio = .{
-            .url = "git+https://github.com/EuroZig/zio#24d6bfbb0c0dd71b1925dad06e5ba17edb79efbe",
-            .hash = "zio-0.18.0-xHbVVNFVKwBpESpBmSGH8QcqCp1M6MrRbdRK8hXipsFr",
+            .url = "git+https://github.com/lalinsky/zio#299a618b6a53607abcf360d8256dd1e86e9a6cdd",
+            .hash = "zio-0.19.0-xHbVVI4kLwCDQRgFZre6XZuVtCzXLIpO3Yeeb_ZgJNIU",
         },
         .toml = .{
             .url = "git+https://github.com/sam701/zig-toml?ref=main#c661327bd9f02f774426c4fe78f60621411b7173",

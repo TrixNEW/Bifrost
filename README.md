@@ -6,17 +6,17 @@ Bifrost uses [NetherNet](https://github.com/Bedrock-Phanatics/nethernet-zig) and
 
 ## Features
 
-- **High Performance** — Event-driven networking with minimal overhead.
-- **Multi-Backend** — Connect players across multiple servers.
-- **Seamless Transfers** — Switch servers without reconnecting.
-- **Session Modes** — Passthrough and managed sessions.
-- **Native Plugins** — Extend Bifrost using Zig, C, or C++.
-- **Packet Handling** — Intercept, modify, and filter packets.
-- **Configurable** — TOML-based configuration.
+- **High Performance** - Event-driven networking with minimal overhead.
+- **Multi-Backend** - Connect players across multiple servers.
+- **Seamless Transfers** - Switch servers without reconnecting.
+- **Session Modes** - Passthrough and managed sessions.
+- **Native Plugins** - Extend Bifrost using Zig, C, or C++.
+- **Packet Handling** - Intercept, modify, and filter packets.
+- **Configurable** - TOML-based configuration.
 
 ## Building
 
-Requires Zig 0.17.0, Git, CMake, and a C/C++ toolchain.
+Requires Zig 0.17.0, Git, CMake, and a C/C++ toolchain. *(Depending on your usecase)*
 
 ```bash
 git clone https://github.com/Bedrock-Phanatics/Bifrost.git

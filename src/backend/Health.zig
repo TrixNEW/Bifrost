@@ -16,6 +16,7 @@ backends: []const Backend,
 interval_ms: u32,
 timeout_ms: u32,
 entries: [Config.max_backends]Entry = @splat(.{}),
+recheck: std.Io.Event = .unset,
 
 pub fn init(backends: []const Backend, interval_ms: u32, timeout_ms: u32) Health {
     return .{ .backends = backends, .interval_ms = interval_ms, .timeout_ms = timeout_ms };
@@ -27,6 +28,14 @@ pub fn status(self: *const Health, id: Backend.Id) Status {
 
 pub fn markFailed(self: *Health, id: Backend.Id) void {
     self.entries[id.index()].status.store(.unhealthy, .release);
+}
+
+/// Takes the backend out until a probe passes. With nowhere else to send players, that probe runs now
+/// instead of turning everyone away for the rest of the interval.
+pub fn dialFailed(self: *Health, io: std.Io, id: Backend.Id) void {
+    self.markFailed(id);
+    for (self.entries[0..self.backends.len]) |*entry| if (entry.status.load(.acquire) != .unhealthy) return;
+    self.recheck.set(io);
 }
 
 pub fn healthyCount(self: *const Health) usize {
@@ -46,7 +55,11 @@ pub fn onlinePlayers(self: *const Health) u32 {
 pub fn run(self: *Health, io: std.Io) void {
     while (true) {
         self.checkAll(io) catch return;
-        io.sleep(.fromMilliseconds(self.interval_ms), .awake) catch return;
+        self.recheck.waitTimeout(io, .{ .duration = .{ .raw = .fromMilliseconds(self.interval_ms), .clock = .awake } }) catch |err| switch (err) {
+            error.Timeout => {},
+            error.Canceled => return,
+        };
+        self.recheck.reset();
     }
 }
 
@@ -140,4 +153,15 @@ test "online players sum healthy backends and saturate" {
     health.markFailed(.of(0));
     try std.testing.expectEqual(Status.unhealthy, health.status(.of(0)));
     try std.testing.expectEqual(@as(u32, 5), health.onlinePlayers());
+}
+
+test "a failed dial asks for a probe right away only when no backend is left" {
+    var backends: [2]Backend = undefined;
+    for (&backends, 1..) |*backend, port| backend.* = try .init(null, .{ .ip4 = .loopback(@intCast(port)) });
+    var health: Health = .init(&backends, 1000, 100);
+    health.dialFailed(std.testing.io, .of(0));
+    try std.testing.expectEqual(Status.unhealthy, health.status(.of(0)));
+    try std.testing.expect(!health.recheck.isSet());
+    health.dialFailed(std.testing.io, .of(1));
+    try std.testing.expect(health.recheck.isSet());
 }

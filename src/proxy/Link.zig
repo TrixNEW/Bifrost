@@ -563,7 +563,7 @@ fn adopt(self: *Link, result: Dial.Result) void {
         log.warn("backend {f} connect failed: {t}", .{ self.env.router.get(self.backend_id).*, err });
         self.env.stats.bump(.backend_failures, 1);
         if (err == error.Canceled) return self.closeSession();
-        if (self.env.health) |health| health.markFailed(self.backend_id);
+        if (self.env.health) |health| health.dialFailed(self.env.io, self.backend_id);
         if (self.session == null) return;
         self.connect() catch |retry_err| {
             log.warn("giving up on player: {t}", .{retry_err});

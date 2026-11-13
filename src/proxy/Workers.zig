@@ -30,6 +30,8 @@ transport: NetherNet,
 listener: ?*Listener = null,
 proxies: []*Proxy,
 next_proxy: std.atomic.Value(usize) = .init(0),
+// Connections no worker had room for
+dropped: std.atomic.Value(u64) = .init(0),
 plugins: ?*Plugins,
 metrics: ?std.Io.net.Server = null,
 
@@ -134,6 +136,7 @@ fn dispatch(context: *anyopaque, connection: *NetherNet.Connection) void {
         return;
     }
     connection.destroy();
+    _ = self.dropped.fetchAdd(1, .monotonic);
 }
 
 // The server list asks for this on every refresh, from the HTTP tasks
@@ -181,6 +184,7 @@ pub fn run(self: *Workers) !void {
 pub fn totals(self: *const Workers) Stats {
     var sum: Stats = .{};
     for (self.proxies) |proxy| sum.add(proxy.stats.snapshot());
+    sum.sessions_rejected += self.dropped.load(.monotonic);
     return sum;
 }
 

@@ -63,7 +63,8 @@ pub fn main(init: std.process.Init) !void {
     const workers = bifrost.Workers.create(init.gpa, rt.io(), config, .{
         .auth = auth,
         .proxy_key = proxy_key,
-        .plugins = &plugins,
+        // Without plugins there are no handles to keep, events to queue or packet tables to check
+        .plugins = if (plugins.loaded.items.len != 0) &plugins else null,
         .identity = identity,
         .issuer_keys = if (config.auth == .verify) keys_json else null,
     }) catch |err| fatal("can't listen on {f}: {t}", .{ config.bind, err });

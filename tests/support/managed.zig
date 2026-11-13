@@ -328,6 +328,8 @@ pub const Backend = struct {
     held: ?*Connection = null,
     refuse: bool = false,
     deflate: bool = false,
+    // Rides in the StartGame batch, set it before a player joins
+    join_packet: ?[]const u8 = null,
     mode: Mode = .normal,
     content: sample.Content = .{},
     chattered_ns: u64 = 0,
@@ -664,7 +666,10 @@ pub const Backend = struct {
                         @memset(batch[3..], try rawPacket(&extra, game_packet_id, "flood"));
                         break :count batch.len;
                     },
-                    else => 3,
+                    else => count: {
+                        batch[3] = self.join_packet orelse break :count 3;
+                        break :count 4;
+                    },
                 };
                 try sendFrame(session, carrier, batch[0..count]);
                 try session.advance(.spawn_ready);

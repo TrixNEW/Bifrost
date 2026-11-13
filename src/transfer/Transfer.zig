@@ -241,6 +241,8 @@ fn receive(self: *Transfer, host: Host, frame: []const u8) !void {
             continue;
         }
         if (self.seen.started) {
+            // Queued, this would reach the player after the commit and kick them off both backends
+            if (packet.kind == .disconnect) return error.BackendRefused;
             if (endsRegistries(packet.kind)) self.seen.world = true;
             if (packet.kind == .play_status and (try Managed.typed(try self.upstream.session.decodePacket(packet), .play_status)).status == .playerspawn) {
                 self.seen.spawned = true;
@@ -339,6 +341,7 @@ fn commit(self: *Transfer, host: Host) !void {
     self.publish(host);
     var outbox: Managed.Outbox = .init(host.gpa);
     defer outbox.deinit();
+    if (managed.client_state.untracked) log.info("transfer {d}: the source showed the client more than is tracked, some of it may linger", .{self.state.epoch});
     try managed.client_state.reset(&outbox);
     // The client keeps its old game mode unless told, and the target never sends it again
     if (Managed.Gameplay.gameMode(self.target_modes.player, self.target_modes.world)) |mode| try outbox.emit(.{ .set_player_game_type = .{ .player_game_type = @fromBackingInt(mode) } });

@@ -1483,6 +1483,24 @@ test "a backend's command list gets plugin commands added, and again after a tra
     try fixtures.waitFor(io, &rig.b.commands, 1);
 }
 
+test "a command list the target sends while the player joins it keeps plugin commands" {
+    var plugins: bifrost.Plugins = try .init(gpa, &.{}, .{});
+    defer plugins.deinit();
+    Commander.reset();
+    try plugins.add(Commander.init, null);
+    var rig: Rig = undefined;
+    try rig.start(.{ .plugins = &plugins });
+    defer rig.deinit();
+    plugins.backends = rig.running.proxy.config.backends();
+    var buffer: [512]u8 = undefined;
+    rig.b.join_packet = try commandList(&buffer, &.{"warp"});
+
+    try rig.transfer(1);
+    try rig.waitFor(.transfers_committed, 1);
+    try rig.expectOn(&rig.b);
+    try expectCommands(rig.player, &.{ "warp", "hub", "slow" });
+}
+
 test "slow plugin work finishes on the player's worker, or reports the player gone" {
     var plugins: bifrost.Plugins = try .init(gpa, &.{}, .{ .max_tasks_per_plugin = 2 });
     defer plugins.deinit();

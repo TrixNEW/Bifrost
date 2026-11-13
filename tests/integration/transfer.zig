@@ -64,6 +64,23 @@ test "a target that drops the login is rolled back" {
     try rig.expectOn(&rig.a);
 }
 
+test "a target that kicks after its StartGame is rolled back" {
+    var rig: Rig = undefined;
+    try rig.start(.{});
+    defer rig.deinit();
+    var buffer: [64]u8 = undefined;
+    rig.b.join_packet = try managed.typedPacket(&buffer, .{ .disconnect = .{
+        .reason = .disconnected,
+        .messages = .{ .messages = .{ .message = "full", .filtered_message = "" } },
+    } });
+
+    try rig.transfer(1);
+    try rig.waitFor(.transfers_failed_before_commit, 1);
+    try rig.expectOn(&rig.a);
+    try std.testing.expectEqual(@as(usize, 0), rig.player.received(.disconnect));
+    try std.testing.expectEqual(@as(u64, 0), rig.stats().transfers_committed);
+}
+
 test "a stalled transfer times out and rolls back" {
     var rig: Rig = undefined;
     try rig.start(.{ .b = .silent_login, .phase_timeout_ms = 300 });

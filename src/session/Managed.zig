@@ -204,6 +204,8 @@ pub fn swapUpstream(self: *Managed, next: Upstream) Upstream {
 pub fn deliver(self: *Managed, ends: Ends, packets: []const []const u8) !usize {
     var batch = self.newBatch(ends, true);
     errdefer batch.discard();
+    var arena: std.heap.ArenaAllocator = .init(self.gpa);
+    defer arena.deinit();
     var skipped: usize = 0;
     for (packets) |packet| {
         const header = protocol.packet.decode(packet, .{ .max_packet_bytes = @max(packet.len, 1) }) catch {
@@ -215,7 +217,12 @@ pub fn deliver(self: *Managed, ends: Ends, packets: []const []const u8) !usize {
             skipped += 1;
             continue;
         }
-        _ = try batch.add(kind, packet);
+        var bytes = packet;
+        // The new backend's command list replaces the client's, plugin commands included
+        if (kind == .available_commands) if (self.pluginCommands()) |plugins| {
+            bytes = self.advertise(arena.allocator(), plugins, bytes) orelse bytes;
+        };
+        _ = try batch.add(kind, bytes);
     }
     try batch.flush();
     return skipped;

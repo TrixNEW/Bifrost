@@ -151,15 +151,20 @@ test "a forged login never reaches the backend" {
     try std.testing.expectEqual(@as(u32, 0), setup.backend.logins.load(.acquire));
 }
 
-test "a client on another protocol version is turned away" {
+test "a client on another protocol version is told which side is outdated" {
     var setup: Setup = undefined;
     try setup.start(try trusted());
     defer setup.deinit();
 
-    const player = try managed.Player.connect(io, setup.running.address(), 2);
-    defer player.destroy();
-    try std.testing.expectError(error.ConnectionClosed, player.settings(current_version + 1));
-    try player.awaitClosed();
+    const newer = try managed.Player.connect(io, setup.running.address(), 2);
+    defer newer.destroy();
+    try std.testing.expectEqual(.loginfailed_serverold, try newer.refusedSettings(current_version + 1));
+    try newer.awaitClosed();
+
+    const older = try managed.Player.connect(io, setup.running.address(), 3);
+    defer older.destroy();
+    try std.testing.expectEqual(.loginfailed_clientold, try older.refusedSettings(current_version - 1));
+    try older.awaitClosed();
 }
 
 test "a backend that doesn't trust the proxy key refuses the player" {

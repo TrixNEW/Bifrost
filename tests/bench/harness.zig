@@ -1,12 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const net = @import("net");
 const bifrost = @import("bifrost");
 const managed = @import("managed.zig");
 
 const IpAddress = std.Io.net.IpAddress;
-const Current = bedwire.protocol.Current;
+const Current = protocol.Current;
 
 pub const max_workers = 64;
 
@@ -345,9 +346,9 @@ pub const Frames = struct {
         for ([_][]u8{ self.request, self.settings, self.login, self.status }) |frame| self.gpa.free(frame);
     }
 
-    fn encode(buffer: []u8, envelope: bedwire.protocol.typed.Envelope) ![]const u8 {
-        var writer = bedwire.protocol.Writer.init(buffer);
-        try bedwire.protocol.typed.encode(&writer, envelope);
+    fn encode(buffer: []u8, envelope: protocol.typed.Envelope) ![]const u8 {
+        var writer = protocol.Writer.init(buffer);
+        try protocol.typed.encode(&writer, envelope);
         return writer.written();
     }
 
@@ -365,7 +366,7 @@ pub const Frames = struct {
         defer gpa.free(raw);
         var writer = bedwire.framing.batch.Writer.init(raw, limits);
         try writer.append(packet);
-        var codec = bedwire.compression.Compression.init(Current.features);
+        var codec = bedwire.compression.Compression.init(.{});
         try codec.negotiate(.snappy, 0);
         const scratch = try gpa.create(bedwire.compression.Scratch);
         defer gpa.destroy(scratch);

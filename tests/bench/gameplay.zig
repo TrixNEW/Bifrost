@@ -1,12 +1,11 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 const bifrost = @import("bifrost");
 const sample = @import("sample");
 const harness = @import("harness.zig");
 
 const abi = bifrost.plugin_abi;
 const Gameplay = bifrost.Managed.Gameplay;
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const Current = protocol.Current;
 
 pub const Case = enum { header_only, auth_input, move_delta, move_absolute, untracked_kind, spawn_remove, query_player, list_entities };

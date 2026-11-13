@@ -706,7 +706,7 @@ const InjectionJob = struct {
                     const sequence = @as(u32, self.tag) << 24 | @as(u32, @intCast(self.sent));
                     _ = try std.fmt.bufPrint(self.message[0..24], "{x:0>16}{x:0>8}", .{ nowNs(self.io), sequence });
                     const text: bifrost.plugin_abi.Text = .{ .message = .of(self.message) };
-                    const len = try bifrost.Plugins.Packets.Decoded.encode(.{ .packet_id = @import("bedwire").protocol.Current.packetId(.text).? }, .text, &text, self.packet);
+                    const len = try bifrost.Plugins.Packets.Decoded.encode(.{ .packet_id = @import("bedrock_protocol").Current.packetId(.text).? }, .text, &text, self.packet);
                     if (len != self.packet.len) return error.InvalidBenchmarkPacket;
                     const frame = try session.encodeOne(self.packet);
                     defer frame.release();

@@ -1,8 +1,7 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 const nbt = @import("nbt.zig");
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const packets = protocol.packets;
 const Hasher = std.hash.Wyhash;
 const max_biome_names = 1024;
@@ -46,7 +45,7 @@ pub const Fingerprint = struct {
     }
 };
 
-pub fn isRegistry(kind: ?bedwire.PacketKind) bool {
+pub fn isRegistry(kind: ?protocol.PacketKind) bool {
     return switch (kind orelse return false) {
         .start_game, .item_registry, .biome_definition_list, .dimension_data, .available_actor_identifiers => true,
         else => false,

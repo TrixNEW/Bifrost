@@ -1,12 +1,11 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 const bifrost = @import("bifrost");
 const managed = @import("../support/managed.zig");
 const sample = @import("../support/sample.zig");
 const Rig = @import("../support/rig.zig").Rig;
 
 const abi = bifrost.plugin_abi;
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const io = std.testing.io;
 const gpa = std.testing.allocator;
 

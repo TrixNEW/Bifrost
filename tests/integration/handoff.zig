@@ -1,5 +1,5 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const test_options = @import("test_options");
 const fixtures = @import("../support/fixtures.zig");
 const managed = @import("../support/managed.zig");
@@ -7,7 +7,7 @@ const FailOnce = @import("../support/FailOnce.zig");
 const Rig = @import("../support/rig.zig").Rig;
 
 const Player = managed.Player;
-const Vec3f = bedwire.protocol.Vec3f;
+const Vec3f = protocol.Vec3f;
 const io = std.testing.io;
 
 const overworld = 0;
@@ -133,7 +133,7 @@ test "what the old backend showed is cleared once, before the new world" {
     try std.testing.expectEqual(@as(usize, 1), player.received(.remove_objective));
     try std.testing.expectEqual(@as(usize, 2), player.received(.boss_event));
     try std.testing.expectEqual(@as(usize, 2), player.received(.mob_effect));
-    const first_change = std.mem.indexOfScalar(bedwire.PacketKind, player.kinds.items, .change_dimension).?;
+    const first_change = std.mem.indexOfScalar(protocol.PacketKind, player.kinds.items, .change_dimension).?;
     try std.testing.expect(player.lastIndex(.remove_actor).? < first_change);
 
     try moveTo(&rig, 0, 2);

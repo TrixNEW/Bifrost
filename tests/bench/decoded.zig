@@ -63,7 +63,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, quick: bool) ![std.enums.values(C
                     },
                     .typed_replacement => {
                         const value = try Decoded.decode(bytes, .text, .{});
-                        const header = (try @import("bedwire").protocol.packet.decode(bytes, .{})).header;
+                        const header = (try @import("bedrock_protocol").packet.decode(bytes, .{})).header;
                         const len = try Decoded.encode(header, .text, &value.text, &out);
                         kept += len;
                         std.mem.doNotOptimizeAway(out[0..len]);

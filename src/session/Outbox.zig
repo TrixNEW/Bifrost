@@ -1,7 +1,6 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const Current = protocol.Current;
 
 const Outbox = @This();

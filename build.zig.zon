@@ -9,8 +9,8 @@
             .hash = "nethernet-1.11.0-dprTqBT3DADXF6Bt5Gs4atZUonqiZyV28dU5MajspfH6",
         },
         .bedwire = .{
-            .url = "git+https://github.com/Bedrock-Phanatics/bedwire#37ebd33cfdbc71a9a9e46341c5ca2be39a87a757",
-            .hash = "bedwire-0.5.6-6vrYrej1HwAhQvRbEwUH8gfvc5Ys6uaZIO6b2OyWwt2m",
+            .url = "git+https://github.com/Bedrock-Phanatics/bedwire#9bca3cb8cbf8a5e3c9ec3973a1220d83ee29e0fd",
+            .hash = "bedwire-0.7.1-6vrYrQwUIACG57DNo_5yeXKd3UApWrLbAoGOxPHF5L6h",
         },
         .zio = .{
             .url = "git+https://github.com/lalinsky/zio#c0a6b5877c9bbc71d2d2c0b3374ce7fa61a4ec12",
@@ -24,6 +24,10 @@
             .url = "git+https://github.com/wolfpld/tracy?ref=v0.13.1#29aa2686416e3b63f7fae6dd256f99c7750023a9",
             .hash = "N-V-__8AAE9yigKRbvISxab346tvhq-xsyJB4ulNPXIuHD-1",
             .lazy = true,
+        },
+        .bedrock_protocol = .{
+            .url = "git+https://github.com/Bedrock-Phanatics/protocol-zig#e00e8ba915247964609b06ba4ac9eaffc6945cc6",
+            .hash = "bedrock_protocol-0.10.1-LNPkarn6DQAhBPQTuvzfRxLtRfNKgq0f_TKEIZIgzI5H",
         },
     },
     .paths = .{

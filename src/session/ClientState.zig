@@ -1,7 +1,6 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const packets = protocol.packets;
 const Current = protocol.Current;
 
@@ -45,7 +44,7 @@ pub fn deinit(self: *ClientState, gpa: std.mem.Allocator) void {
     self.objective_lengths.deinit(gpa);
 }
 
-pub fn tracks(kind: ?bedwire.PacketKind) bool {
+pub fn tracks(kind: ?protocol.PacketKind) bool {
     return switch (kind orelse return false) {
         .add_actor, .add_player, .add_item_actor, .add_painting, .remove_actor, .player_list, .mob_effect, .boss_event, .set_display_objective, .remove_objective, .container_open, .container_close, .player_fog, .update_client_input_locks, .level_event, .set_hud, .camera_instruction => true,
         else => false,
@@ -229,7 +228,7 @@ fn observed(state: *ClientState, value: protocol.typed.Packet) !void {
     try state.observe(std.testing.allocator, .{ .header = .{ .packet_id = 0 }, .kind = null, .payload = &.{}, .value = .{ .typed = value } });
 }
 
-fn resetKinds(state: *ClientState, kinds: []bedwire.PacketKind) ![]bedwire.PacketKind {
+fn resetKinds(state: *ClientState, kinds: []protocol.PacketKind) ![]protocol.PacketKind {
     var outbox: Outbox = .init(std.testing.allocator);
     defer outbox.deinit();
     try state.reset(&outbox);
@@ -252,11 +251,11 @@ test "everything a backend left behind is undone once" {
     try observed(&state, .{ .level_event = .{ .event_id = start_rain, .position = .{ .x = 0, .y = 0, .z = 0 }, .data = 0 } });
     try observed(&state, .{ .update_client_input_locks = .{ .input_lock_component_data = 2 } });
 
-    var kinds: [16]bedwire.PacketKind = undefined;
-    try std.testing.expectEqualSlices(bedwire.PacketKind, &.{
+    var kinds: [16]protocol.PacketKind = undefined;
+    try std.testing.expectEqualSlices(protocol.PacketKind, &.{
         .container_close, .mob_effect, .boss_event, .remove_objective, .update_client_input_locks, .level_event, .stop_sound,
     }, try resetKinds(&state, &kinds));
-    try std.testing.expectEqualSlices(bedwire.PacketKind, &.{.stop_sound}, try resetKinds(&state, &kinds));
+    try std.testing.expectEqualSlices(protocol.PacketKind, &.{.stop_sound}, try resetKinds(&state, &kinds));
 }
 
 test "a closed container is not closed again" {
@@ -264,8 +263,8 @@ test "a closed container is not closed again" {
     defer state.deinit(std.testing.allocator);
     try observed(&state, .{ .container_open = .{ .container_id = 3, .container_type = 0, .position = .{ .x = 0, .y = 0, .z = 0 }, .target_actor_id = -1 } });
     state.containerClosed();
-    var kinds: [4]bedwire.PacketKind = undefined;
-    try std.testing.expectEqualSlices(bedwire.PacketKind, &.{.stop_sound}, try resetKinds(&state, &kinds));
+    var kinds: [4]protocol.PacketKind = undefined;
+    try std.testing.expectEqualSlices(protocol.PacketKind, &.{.stop_sound}, try resetKinds(&state, &kinds));
 }
 
 test "the player's own inventory closes with its signed container type" {

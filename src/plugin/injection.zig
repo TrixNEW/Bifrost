@@ -1,4 +1,4 @@
-const protocol = @import("bedwire").protocol;
+const protocol = @import("bedrock_protocol");
 const abi = @import("abi.zig");
 
 pub const max_packet_bytes = 128 * 1024;
@@ -145,7 +145,6 @@ test "skin and toast injection validates direction and supports HD textures" {
     var texture: [128 * 128 * 4]u8 = @splat(255);
     var skin: protocol.types.SerializedSkinRef = .{
         .id = "test",
-        .play_fab_id = "",
         .resource_patch = "{}",
         .image_data = .{ .width = 0, .height = 0, .image_bytes = "" },
         .animated_image_data = .empty,

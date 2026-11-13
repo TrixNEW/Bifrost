@@ -1,5 +1,5 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const Config = @import("../config/Config.zig");
 const Health = @import("../backend/Health.zig");
 const NetherNet = @import("../net/NetherNet.zig");
@@ -144,8 +144,8 @@ fn serverStatus(context: ?*anyopaque) anyerror!Listener.ServerStatus {
     const self: *Workers = @ptrCast(@alignCast(context.?));
     return .{
         .name = self.config.motd(),
-        .protocol = bedwire.protocol.protocol_version,
-        .version = bedwire.protocol.minecraft_version,
+        .protocol = protocol.protocol_version,
+        .version = protocol.minecraft_version,
         .level = "Bifrost",
         .players = @min(self.health.onlinePlayers(), self.config.max_players),
         .max_players = self.config.max_players,

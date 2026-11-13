@@ -1,12 +1,11 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 const abi = @import("../plugin/abi.zig");
 const Query = @import("../plugin/Handles.zig").Query;
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const packets = protocol.packets;
 const Vec3f = protocol.Vec3f;
-const PacketKind = bedwire.PacketKind;
+const PacketKind = protocol.PacketKind;
 
 const Gameplay = @This();
 
@@ -528,7 +527,7 @@ test "entities follow spawns, moves and removals and stop at their bound" {
     try testing.expectEqual(abi.Status.not_found, find(&state, 31, &found));
 
     const long: [max_identifier_bytes + 1]u8 = @splat('a');
-    backend(&state, .{ .add_actor = .{ .target_actor_id = -31, .target_runtime_id = 31, .actor_type = &long, .position = .{ .x = 0, .y = 0, .z = 0 }, .velocity = .{ .x = 0, .y = 0, .z = 0 }, .rotation = .{ .x = 0, .y = 0 }, .y_head_rotation = 0, .y_body_rotation = 0, .attributes_list = .empty, .actor_data = .empty, .synched_properties = .{ .int_entries_list = .empty, .float_entries_list = .empty }, .actor_links = .empty } });
+    backend(&state, .{ .add_actor = .{ .target_actor_id = -31, .target_runtime_id = 31, .actor_type = &long, .position = .{ .x = 0, .y = 0, .z = 0 }, .velocity = .{ .x = 0, .y = 0, .z = 0 }, .rotation = .{ .x = 0, .y = 0 }, .y_head_rotation = 0, .y_body_rotation = 0, .attributes_list = .empty, .actor_data = .empty, .synched_properties = .{ .int_entries_list = .empty, .float_entries_list = .empty }, .actor_links = .empty, .passenger_block_data = null } });
     try testing.expectEqual(abi.Status.ok, find(&state, 31, &found));
     try testing.expectEqual(@as(u32, 0), found.identifier_len);
 

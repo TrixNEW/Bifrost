@@ -1,5 +1,6 @@
 const std = @import("std");
 const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const Rate = @import("../proxy/Rate.zig");
 const NetherNet = @import("../net/NetherNet.zig");
 
@@ -73,7 +74,7 @@ pub fn initPool(gpa: std.mem.Allocator) !bedwire.BufferPool {
 }
 
 pub fn init(pool: *bedwire.BufferPool, player_bytes_per_second: u32) !Observer {
-    return .{ .tap = try bedwire.Tap.init(.{ .pool = pool, .policy = session_policy }), .inbound = .bytes(player_bytes_per_second) };
+    return .{ .tap = try bedwire.Tap.init(.{ .pool = pool, .policy = session_policy, .protocol_version = protocol.protocol_version }), .inbound = .bytes(player_bytes_per_second) };
 }
 
 pub fn deinit(self: *Observer) void {

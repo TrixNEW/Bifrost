@@ -1,8 +1,7 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 const Plugins = @import("../plugin/Plugins.zig");
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const Current = protocol.Current;
 const wire = protocol.packets.available_commands;
 const Packet = wire.Packet;

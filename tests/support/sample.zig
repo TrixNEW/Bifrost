@@ -2,7 +2,7 @@ const std = @import("std");
 const bedwire = @import("bedwire");
 const oidc_key = @import("oidc_key.zig");
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const Current = protocol.Current;
 pub const Ecdsa = bedwire.crypto.spki.Ecdsa;
 

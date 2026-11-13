@@ -1,7 +1,7 @@
 const std = @import("std");
 const bedwire = @import("bedwire");
 const sample = @import("sample.zig");
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const Current = protocol.Current;
 
 const gpa = std.testing.allocator;
@@ -69,7 +69,7 @@ fn compressed(packet: []const u8) ![]u8 {
     defer gpa.free(raw);
     var writer = bedwire.framing.batch.Writer.init(raw, limits);
     try writer.append(packet);
-    var codec = bedwire.compression.Compression.init(Current.features);
+    var codec = bedwire.compression.Compression.init(.{});
     try codec.negotiate(.snappy, 0);
     const scratch = try gpa.create(bedwire.compression.Scratch);
     defer gpa.destroy(scratch);
@@ -86,5 +86,5 @@ pub fn loginFrame(key: sample.Ecdsa.KeyPair, name: []const u8, xuid: []const u8,
     defer gpa.free(request);
     const storage = try gpa.alloc(u8, request.len + 32);
     defer gpa.free(storage);
-    return compressed(try bedwire.auth.login.encodeLoginPacket(Current, storage, request, .{}));
+    return compressed(try bedwire.auth.login.encodeLoginPacket(Current.protocol_number, storage, request, .{}));
 }

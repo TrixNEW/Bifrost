@@ -36,7 +36,7 @@ pub fn loadTransport(plugins: *bifrost.Plugins, comptime target: abi.PacketTarge
             plugin.name = .of("injection-transport");
             plugin.plugin_version = .of("1");
             plugin.capabilities = .{ .packets = true };
-            return api.subscribe_packet(api.context, .from_player, @import("bedwire").protocol.Current.packetId(.text).?, .in_game, .{}, onPacket, @constCast(api));
+            return api.subscribe_packet(api.context, .from_player, @import("bedrock_protocol").Current.packetId(.text).?, .in_game, .{}, onPacket, @constCast(api));
         }
 
         fn onPacket(user: ?*anyopaque, packet: *abi.Packet) callconv(.c) abi.PacketAction {

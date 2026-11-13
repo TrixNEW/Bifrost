@@ -1,7 +1,7 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 
-const packets = bedwire.protocol.packets;
+const packets = protocol.packets;
 const Info = packets.resource_packs_info.Packet;
 const Stack = packets.resource_pack_stack.Packet;
 const Hasher = std.hash.Wyhash;

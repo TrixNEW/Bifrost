@@ -7,9 +7,9 @@ What's open as of 2.0.0-rc.11. Details live in the linked docs.
 - **No real client has joined through Bifrost.** Every test uses in-process players and backends built on bedwire
   and nethernet-zig. Neither a vanilla Bedrock client joining Bifrost nor a full Bifrost-to-Quark session has
   been run. The Quark login path was checked by verifying a bedwire-built login with Quark's own code.
-- **Bifrost speaks Minecraft 1.26.51.** Bedwire 0.6 and later moved to 1.26.60 and no longer ship the packet
-  codecs, so following them means taking protocol-zig as a direct dependency. Until then managed mode
-  refuses a 1.26.60 client at the version check and can't log in to a 1.26.60 backend.
+- **Bifrost speaks Minecraft 1.26.60 (protocol 2225) only.** Packet codecs come from protocol-zig, which
+  follows one stable protocol at a time. A client on another version gets a PlayStatus saying which side is
+  outdated, and raw packets from plugins have to use the 1.26.60 layouts.
 - **A dimension change the old backend sent just before a transfer commits** can have its client ack counted as
   the handoff's. Suspected from reading the code, not reproduced.
 - **No AddressSanitizer run.** The full suite passes on Windows and Linux in Debug, ReleaseSafe and ReleaseFast,

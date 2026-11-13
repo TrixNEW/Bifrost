@@ -1,5 +1,6 @@
 const std = @import("std");
 const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const Peer = @import("../net/Peer.zig");
 const Managed = @import("Managed.zig");
 const Stats = @import("../proxy/Stats.zig");
@@ -17,11 +18,16 @@ pub const Context = struct {
     backend: *Peer,
 };
 
-session: Managed.BackendSession,
+session: bedwire.Session,
 phase: Phase = .connecting,
 
 pub fn init(shared: *Managed.Shared) !Upstream {
-    return .{ .session = try .init(.client, .{ .pool = &shared.pool, .policy = Managed.session_policy }) };
+    return .{ .session = try .init(.client, .{
+        .pool = &shared.pool,
+        .policy = Managed.session_policy,
+        .features = Managed.backend_features,
+        .protocol_version = protocol.protocol_version,
+    }) };
 }
 
 pub fn deinit(self: *Upstream) void {
@@ -32,7 +38,7 @@ pub fn connected(self: *Upstream, ctx: Context) !void {
     std.debug.assert(self.phase == .connecting);
     var buffer: [16]u8 = undefined;
     try self.send(ctx, &.{try Managed.encodeTyped(&buffer, .{ .request_network_settings = .{
-        .client_network_version = @intCast(Managed.BackendProfile.protocol_number),
+        .client_network_version = @intCast(protocol.protocol_version),
     } })});
     self.phase = .settings;
 }
@@ -40,17 +46,17 @@ pub fn connected(self: *Upstream, ctx: Context) !void {
 pub fn login(self: *Upstream, ctx: Context, identity: *const bedwire.Identity, client_data: []const u8, player_address: ?std.Io.net.IpAddress) !void {
     std.debug.assert(self.phase == .waiting_for_login);
     const expires = std.Io.Clock.real.now(ctx.io).toSeconds() + Managed.login_lifetime_s;
-    const request = try bedwire.auth.login.buildProxyConnectionRequest(Managed.BackendProfile, ctx.gpa, ctx.shared.key, identity, client_data, player_address, expires, .envelope, Managed.limits);
+    const request = try bedwire.auth.login.buildProxyConnectionRequest(Managed.backend_features, ctx.gpa, ctx.shared.key, identity, client_data, player_address, expires, .envelope, Managed.limits);
     defer ctx.gpa.free(request);
     const storage = try ctx.gpa.alloc(u8, request.len + 32);
     defer ctx.gpa.free(storage);
-    try self.send(ctx, &.{try bedwire.auth.login.encodeLoginPacket(Managed.BackendProfile, storage, request, Managed.limits)});
+    try self.send(ctx, &.{try bedwire.auth.login.encodeLoginPacket(protocol.protocol_version, storage, request, Managed.limits)});
     ctx.stats.bump(.proxy_logins, 1);
     self.phase = .logging_in;
 }
 
 /// Over NetherNet the backend answers the Login with PlayStatus straight away, no handshake.
-pub fn receive(self: *Upstream, packet: Managed.BackendSession.Packet) !Progress {
+pub fn receive(self: *Upstream, packet: bedwire.Packet) !Progress {
     if (packet.kind == .disconnect) return error.BackendRefused;
     switch (self.phase) {
         .settings => {
@@ -60,8 +66,8 @@ pub fn receive(self: *Upstream, packet: Managed.BackendSession.Packet) !Progress
         },
         .logging_in => {
             if (packet.kind != .play_status) return error.UnexpectedPacket;
-            const status = (try Managed.typed(try self.session.decodePacket(packet), .play_status)).status;
-            if (status != .loginsuccess or self.session.state != .resource_packs) return error.BackendRefused;
+            const status = (try self.session.decodeControl(bedwire.control.PlayStatus, packet)).status;
+            if (status != bedwire.control.PlayStatus.login_success or self.session.state != .resource_packs) return error.BackendRefused;
             self.phase = .ready;
             return .logged_in;
         },

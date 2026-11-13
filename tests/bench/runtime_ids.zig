@@ -1,12 +1,12 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const bifrost = @import("bifrost");
 const sample = @import("sample");
 const harness = @import("harness.zig");
 
 const self_id = bifrost.Managed.self_id;
-const Current = bedwire.protocol.Current;
-const zero: bedwire.protocol.Vec3f = .{ .x = 0, .y = 0, .z = 0 };
+const Current = protocol.Current;
+const zero: protocol.Vec3f = .{ .x = 0, .y = 0, .z = 0 };
 
 pub const Case = enum {
     identity,
@@ -32,7 +32,7 @@ const stream_len = 4096;
 const player = 7;
 
 // Half the stream can carry actor ids, like a busy server's movement and metadata traffic
-fn stream(gpa: std.mem.Allocator, storage: *std.ArrayList(u8), bounds: *[stream_len][2]usize, kinds: *[stream_len]?bedwire.PacketKind, target: u64) !void {
+fn stream(gpa: std.mem.Allocator, storage: *std.ArrayList(u8), bounds: *[stream_len][2]usize, kinds: *[stream_len]?protocol.PacketKind, target: u64) !void {
     var payload: [64]u8 = undefined;
     for (&payload, 0..) |*byte, i| byte.* = @truncate(i * 31 + 7);
     for (bounds, kinds, 0..) |*bound, *kind, i| {
@@ -49,7 +49,7 @@ fn stream(gpa: std.mem.Allocator, storage: *std.ArrayList(u8), bounds: *[stream_
             } }),
             else => try sample.rawPacket(&buffer, 1020, &payload),
         };
-        kind.* = Current.packetKind((try bedwire.protocol.packet.decode(bytes, .{})).header.packet_id);
+        kind.* = Current.packetKind((try protocol.packet.decode(bytes, .{})).header.packet_id);
         bound.* = .{ storage.items.len, bytes.len };
         try storage.appendSlice(gpa, bytes);
     }
@@ -64,7 +64,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, quick: bool) ![std.enums.values(C
         var storage: std.ArrayList(u8) = .empty;
         defer storage.deinit(gpa);
         var bounds: [stream_len][2]usize = undefined;
-        var kinds: [stream_len]?bedwire.PacketKind = undefined;
+        var kinds: [stream_len]?protocol.PacketKind = undefined;
         try stream(gpa, &storage, &bounds, &kinds, if (case == .own_ids) player else 900);
         const swap: self_id.Swap = .{
             .client = .{ .runtime = player, .unique = player },

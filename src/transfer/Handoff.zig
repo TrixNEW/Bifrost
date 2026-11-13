@@ -1,8 +1,7 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 const Outbox = @import("../session/Outbox.zig");
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const Vec3f = protocol.Vec3f;
 
 const Handoff = @This();
@@ -72,6 +71,7 @@ fn blankWorld(outbox: *Outbox, dimension: i32, position: Vec3f) !void {
         .cache_enabled = false,
         .cache_metadata = .empty,
         .serialized_chunk_data = emptyChunk(&payload, dimension),
+        .is_client_biome_update = false,
     } });
 }
 
@@ -97,7 +97,7 @@ pub fn isAck(packet: protocol.BorrowedEnvelope) bool {
     return packet.value.typed.player_action.action == .changedimensionack;
 }
 
-fn sent(outbox: *Outbox, kinds: []bedwire.PacketKind, dimensions: []i32) !usize {
+fn sent(outbox: *Outbox, kinds: []protocol.PacketKind, dimensions: []i32) !usize {
     var packets: [8][]const u8 = undefined;
     var changes: usize = 0;
     for (outbox.slices(0, &packets), 0..) |packet, i| {
@@ -116,14 +116,14 @@ fn sent(outbox: *Outbox, kinds: []bedwire.PacketKind, dimensions: []i32) !usize 
 test "a move within one dimension detours through another" {
     var outbox: Outbox = .init(std.testing.allocator);
     defer outbox.deinit();
-    var kinds: [8]bedwire.PacketKind = undefined;
+    var kinds: [8]protocol.PacketKind = undefined;
     var dimensions: [4]i32 = undefined;
 
     var handoff = try begin(overworld, .{ .dimension = overworld, .position = .{ .x = 10, .y = 64, .z = -20 } }, &outbox);
     try std.testing.expectEqual(@as(usize, 1), try sent(&outbox, &kinds, &dimensions));
     try std.testing.expectEqual(nether, dimensions[0]);
-    try std.testing.expectEqual(bedwire.PacketKind.network_chunk_publisher_update, kinds[1]);
-    try std.testing.expectEqual(bedwire.PacketKind.level_chunk, kinds[2]);
+    try std.testing.expectEqual(protocol.PacketKind.network_chunk_publisher_update, kinds[1]);
+    try std.testing.expectEqual(protocol.PacketKind.level_chunk, kinds[2]);
     try std.testing.expect(handoff.waitingForTarget());
 
     try std.testing.expectEqual(Progress.sent_target, try handoff.acknowledged(&outbox));
@@ -141,7 +141,7 @@ test "a move within one dimension detours through another" {
 test "a move to another dimension goes straight there" {
     var outbox: Outbox = .init(std.testing.allocator);
     defer outbox.deinit();
-    var kinds: [8]bedwire.PacketKind = undefined;
+    var kinds: [8]protocol.PacketKind = undefined;
     var dimensions: [4]i32 = undefined;
     var handoff = try begin(overworld, .{ .dimension = nether, .position = .{ .x = 0, .y = 70, .z = 0 } }, &outbox);
     try std.testing.expectEqual(@as(usize, 1), outbox.count());

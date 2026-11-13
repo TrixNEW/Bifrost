@@ -1,7 +1,6 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const actor_refs = protocol.actor_refs;
 
 pub const Ids = struct {
@@ -28,7 +27,7 @@ pub const Swap = struct {
     }
 
     /// Null when the packet holds neither id; otherwise the re-encoded packet, allocated in `arena`.
-    pub fn apply(self: Swap, arena: std.mem.Allocator, kind: ?bedwire.PacketKind, packet: []const u8, limits: protocol.DecodeLimits) !?[]const u8 {
+    pub fn apply(self: Swap, arena: std.mem.Allocator, kind: ?protocol.PacketKind, packet: []const u8, limits: protocol.DecodeLimits) !?[]const u8 {
         if (!actor_refs.packets.contains(kind orelse return null)) return null;
         var envelope = try protocol.typed.decode(packet, limits);
         if (!try actor_refs.rewrite(arena, &envelope.packet, self)) return null;
@@ -77,4 +76,21 @@ test "the player's ids swap both ways and other actors are left alone" {
     const text = [_]u8{ 9, 0, 0 };
     try std.testing.expectEqual(null, try swap.apply(gpa, .text, &text, .{}));
     try std.testing.expectError(error.EndOfStream, swap.apply(gpa, .remove_actor, &.{14}, .{}));
+}
+
+test "ids in a packet 1.26.60 added are swapped too" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const swap: Swap = .{ .client = .{ .runtime = 1, .unique = -1 }, .backend = .{ .runtime = 300, .unique = 4000 } };
+    var buffer: [64]u8 = undefined;
+    const seated: protocol.typed.Packet = .{ .set_passenger_of_block = .{ .passenger = 4000, .passenger_of_block_data = .{
+        .block_pos = .{ .x = 1, .y = 2, .z = 3 },
+        .offset = .{ .x = 0, .y = 0, .z = 0 },
+        .rotation = 90,
+        .rotation_limit = 180,
+        .emote_type = .riding,
+    } } };
+    const moved = (try swapPacket(arena.allocator(), swap, try encode(&buffer, seated))).?.packet.set_passenger_of_block;
+    try std.testing.expectEqual(@as(i64, -1), moved.passenger);
+    try std.testing.expectEqual(@as(f32, 90), moved.passenger_of_block_data.?.rotation);
 }

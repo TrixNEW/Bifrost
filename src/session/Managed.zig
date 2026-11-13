@@ -20,32 +20,32 @@ const Packets = Plugins.Packets;
 const abi = @import("../plugin/abi.zig");
 const trace = @import("../trace.zig");
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const Current = protocol.Current;
 pub const Ecdsa = bedwire.crypto.spki.Ecdsa;
 
 const Managed = @This();
 const log = std.log.scoped(.managed);
 
-// Same protocol, but logs in with the proxy's certificate chain
-pub const BackendProfile = struct {
-    pub const protocol_number = Current.protocol_number;
-    pub const features: protocol.SessionFeatures = .{ .login_flow = .certificate_chain };
-    pub const packetKind = Current.packetKind;
-    pub const packetId = Current.packetId;
-    pub const packetDirection = Current.packetDirection;
-    pub const decodeBorrowed = Current.decodeBorrowed;
-    pub const encode = Current.encode;
+// Backends take the proxy's certificate chain in place of a Microsoft token
+pub const backend_features: bedwire.SessionFeatures = .{ .login_flow = .certificate_chain };
+
+pub const directions: bedwire.Directions = blk: {
+    @setEvalBranchQuota(100_000);
+    var table: bedwire.Directions = .{};
+    for (std.enums.values(protocol.PacketKind)) |kind| {
+        const id = protocol.registry.packetId(kind) orelse continue;
+        switch (protocol.registry.packetDirection(kind)) {
+            .client_to_server => table.server.unset(id),
+            .server_to_client => table.client.unset(id),
+            .bidirectional => {},
+        }
+    }
+    break :blk table;
 };
 
-comptime {
-    protocol.validateProfile(BackendProfile);
-}
-
-pub const PlayerSession = bedwire.Session;
 // NetherNet frames have no 0xfe header, and DTLS stands in for Minecraft's own encryption
-pub const session_policy: bedwire.SessionPolicy = .{ .encryption = .disabled, .batch_header = false };
-pub const BackendSession = bedwire.SessionWithProfile(BackendProfile);
+pub const session_policy: bedwire.SessionPolicy = .{ .encryption = .disabled, .batch_header = false, .directions = &directions };
 
 pub const limits: bedwire.Limits = .{
     .max_frame_bytes = 2 * 1024 * 1024,
@@ -103,7 +103,7 @@ pub const PlayerPhase = enum { settings, login, ready };
 
 gpa: std.mem.Allocator,
 shared: *Shared,
-player: PlayerSession,
+player: bedwire.Session,
 upstream: Upstream,
 player_phase: PlayerPhase = .settings,
 identity: ?bedwire.Identity = null,
@@ -135,7 +135,7 @@ inbound: Rate = .unlimited,
 pub fn create(gpa: std.mem.Allocator, shared: *Shared, player_address: std.Io.net.IpAddress, early_packets: u32, early_bytes: u32) !*Managed {
     const self = try gpa.create(Managed);
     errdefer gpa.destroy(self);
-    var player: PlayerSession = try .init(.server, .{ .pool = &shared.pool, .policy = session_policy });
+    var player: bedwire.Session = try .init(.server, .{ .pool = &shared.pool, .policy = session_policy, .protocol_version = protocol.protocol_version });
     errdefer player.deinit();
     self.* = .{
         .gpa = gpa,
@@ -213,7 +213,7 @@ pub fn deliver(self: *Managed, ends: Ends, packets: []const []const u8) !usize {
             continue;
         };
         const kind = Current.packetKind(header.header.packet_id);
-        if (!self.player.state.permits(Current.features, .server, kind)) {
+        if (!admits(self.player.state, .server, header.header.packet_id)) {
             skipped += 1;
             continue;
         }
@@ -258,7 +258,7 @@ const Batch = struct {
     added: usize = 0,
 
     // Returns what was queued, or null if a plugin cancelled the packet
-    fn add(self: *Batch, kind: ?bedwire.PacketKind, bytes: []const u8) !?[]const u8 {
+    fn add(self: *Batch, kind: ?protocol.PacketKind, bytes: []const u8) !?[]const u8 {
         const shared = self.managed.shared;
         var packet = bytes;
         if (self.count == shared.batch.len) try self.flush();
@@ -343,8 +343,8 @@ const Checker = struct {
     to_player: bool,
 
     pub fn permits(self: Checker, packet_type: abi.PacketType) bool {
-        const kind = Packets.Decoded.kind(packet_type) orelse return false;
-        return self.managed.player.state.permits(Current.features, if (self.to_player) .server else .client, kind);
+        const id = Current.packetId(Packets.Decoded.kind(packet_type) orelse return false) orelse return false;
+        return admits(self.managed.player.state, if (self.to_player) .server else .client, id);
     }
 
     pub fn decode(self: Checker, bytes: []const u8, packet_type: abi.PacketType) Packets.Decoded.Error!Packets.Decoded.Value {
@@ -354,9 +354,8 @@ const Checker = struct {
 
     pub fn valid(self: Checker, bytes: []const u8) bool {
         const header = protocol.packet.decode(bytes, .{ .max_packet_bytes = limits.max_packet_bytes }) catch return false;
-        const kind = Current.packetKind(header.header.packet_id);
-        if (!self.managed.player.state.permits(Current.features, if (self.to_player) .server else .client, kind)) return false;
-        if (kind == null) return true;
+        if (!admits(self.managed.player.state, if (self.to_player) .server else .client, header.header.packet_id)) return false;
+        if (Current.packetKind(header.header.packet_id) == null) return true;
         _ = Current.decodeBorrowed(bytes, protocolLimits()) catch return false;
         return true;
     }
@@ -412,7 +411,7 @@ fn tracking(self: *const Managed) Gameplay.Tracking {
 }
 
 // Proxy state follows what was delivered, after plugins had their say
-fn sentToPlayer(self: *Managed, kind: ?bedwire.PacketKind, packet: []const u8) !void {
+fn sentToPlayer(self: *Managed, kind: ?protocol.PacketKind, packet: []const u8) !void {
     const client = ClientState.tracks(kind);
     const gameplay = Gameplay.fromBackend(kind, self.tracking());
     if (kind != .change_dimension and !client and !gameplay) return;
@@ -428,7 +427,7 @@ fn sentToPlayer(self: *Managed, kind: ?bedwire.PacketKind, packet: []const u8) !
     };
 }
 
-fn sentToBackend(self: *Managed, kind: ?bedwire.PacketKind, packet: []const u8) !?bedwire.State {
+fn sentToBackend(self: *Managed, kind: ?protocol.PacketKind, packet: []const u8) !?bedwire.State {
     if (Gameplay.fromPlayer(kind) and self.tracking().player) if (decode(packet)) |decoded| self.gameplay.reported(decoded) else |_| {};
     switch (kind orelse return null) {
         .request_chunk_radius => {
@@ -447,7 +446,13 @@ fn sentToBackend(self: *Managed, kind: ?bedwire.PacketKind, packet: []const u8) 
     return null;
 }
 
-fn decode(packet: []const u8) !protocol.BorrowedEnvelope {
+// The stage rule for the session's own packets, and the protocol's direction for the rest
+fn admits(state: bedwire.State, sender: bedwire.Role, id: u10) bool {
+    const control = bedwire.PacketKind.fromId(id);
+    return state.permits(.{}, sender, control) and (control != null or directions.permits(sender, id));
+}
+
+pub fn decode(packet: []const u8) !protocol.BorrowedEnvelope {
     return Current.decodeBorrowed(packet, protocolLimits());
 }
 
@@ -583,10 +588,14 @@ pub fn fromBackend(self: *Managed, ends: Ends, payload: []const u8) !void {
     }
 }
 
-fn answerSettings(self: *Managed, ends: Ends, packet: PlayerSession.Packet) !void {
-    const request = try typed(try self.player.decodePacket(packet), .request_network_settings);
-    if (request.client_network_version != Current.protocol_number) return error.UnsupportedVersion;
+fn answerSettings(self: *Managed, ends: Ends, packet: bedwire.Packet) !void {
+    const request = try typed(try decode(packet.bytes), .request_network_settings);
     var buffer: [32]u8 = undefined;
+    if (request.client_network_version != Current.protocol_number) {
+        const outdated = request.client_network_version < Current.protocol_number;
+        self.sendToPlayer(ends, &.{try encodeTyped(&buffer, .{ .play_status = .{ .status = if (outdated) .loginfailed_clientold else .loginfailed_serverold } })}) catch {};
+        return error.UnsupportedVersion;
+    }
     try self.sendToPlayer(ends, &.{try encodeTyped(&buffer, .{ .network_settings = .{
         .compression_threshold = player_compression_threshold,
         .compression_algorithm = .zlib,
@@ -598,7 +607,7 @@ fn answerSettings(self: *Managed, ends: Ends, packet: PlayerSession.Packet) !voi
     self.player_phase = .login;
 }
 
-fn authenticate(self: *Managed, ends: Ends, packet: PlayerSession.Packet) !void {
+fn authenticate(self: *Managed, ends: Ends, packet: bedwire.Packet) !void {
     if (self.shared.logins) |logins| if (!logins.take(Packets.now(ends.io) / std.time.ns_per_ms, 1)) {
         ends.stats.bump(.logins_throttled, 1);
         self.sendDisconnect(ends, "Server is busy, try again shortly") catch {};
@@ -611,7 +620,7 @@ fn authenticate(self: *Managed, ends: Ends, packet: PlayerSession.Packet) !void 
         return err;
     };
     errdefer identity.deinit();
-    const client_data = try clientData(self.gpa, try typed(try self.player.decodePacket(packet), .login));
+    const client_data = try clientData(self.gpa, try typed(try decode(packet.bytes), .login));
     errdefer self.gpa.free(client_data);
     // Without Minecraft encryption a captured Login could be replayed, unless it has to match the key the connection proved
     const proven = ends.player.identityKey() orelse return error.Unauthenticated;
@@ -627,7 +636,7 @@ fn authenticate(self: *Managed, ends: Ends, packet: PlayerSession.Packet) !void 
     self.client_data = client_data;
 }
 
-fn relayFromPlayer(self: *Managed, ends: Ends, packets: *PlayerSession.Packets, frame: []const u8) !void {
+fn relayFromPlayer(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame: []const u8) !void {
     var next_state: ?bedwire.State = null;
     var batch = self.newBatch(ends, false);
     errdefer batch.discard();
@@ -635,8 +644,9 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *PlayerSession.Packets, 
     var intact = true;
     while (packets.next()) |packet| {
         total += 1;
-        if (self.syncing) if (packet.kind) |kind| switch (kind) {
-            .player_action => if (Handoff.isAck(try self.player.decodePacket(packet))) {
+        const kind = Current.packetKind(packet.id);
+        if (self.syncing) if (kind) |known| switch (known) {
+            .player_action => if (Handoff.isAck(try decode(packet.bytes))) {
                 self.dimension_acks += 1;
                 continue;
             },
@@ -647,9 +657,9 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *PlayerSession.Packets, 
             try self.early.push(self.gpa, packet.bytes);
             continue;
         }
-        const sent = try batch.add(packet.kind, packet.bytes) orelse continue;
+        const sent = try batch.add(kind, packet.bytes) orelse continue;
         if (sent.ptr != packet.bytes.ptr) intact = false;
-        if (try self.sentToBackend(packet.kind, sent)) |state| next_state = state;
+        if (try self.sentToBackend(kind, sent)) |state| next_state = state;
     }
     try batch.finish(frame, total, intact);
     if (next_state) |state| try self.advance(state);
@@ -660,7 +670,7 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *PlayerSession.Packets, 
     };
 }
 
-fn relayFromBackend(self: *Managed, ends: Ends, packets: *BackendSession.Packets, frame: []const u8) !void {
+fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame: []const u8) !void {
     var start_game = false;
     var batch = self.newBatch(ends, true);
     errdefer batch.discard();
@@ -670,23 +680,24 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *BackendSession.Packets
     var intact = true;
     while (packets.next()) |packet| {
         total += 1;
+        const kind = Current.packetKind(packet.id);
         var bytes = packet.bytes;
-        if (packet.kind == .available_commands) if (self.pluginCommands()) |plugins| {
+        if (kind == .available_commands) if (self.pluginCommands()) |plugins| {
             bytes = self.advertise(arena.allocator(), plugins, bytes) orelse bytes;
         };
-        if (self.syncing and packet.kind == .play_status) {
-            if ((try typed(try self.upstream.session.decodePacket(packet), .play_status)).status == .playerspawn) {
+        if (self.syncing and kind == .play_status) {
+            if ((try typed(try decode(packet.bytes), .play_status)).status == .playerspawn) {
                 self.target_spawned = true;
                 continue;
             }
         }
-        if (registries.isRegistry(packet.kind)) {
+        if (registries.isRegistry(kind)) {
             if (self.transferred) {
-                try self.checkRegistry(packet);
+                try self.checkRegistry(packet.bytes);
                 continue;
             }
             if (self.player.state != .in_game) {
-                const decoded = try self.upstream.session.decodePacket(packet);
+                const decoded = try decode(packet.bytes);
                 try self.initial_registries.record(decoded);
                 if (decoded.value == .typed and decoded.value.typed == .start_game) {
                     const start = decoded.value.typed.start_game;
@@ -701,28 +712,28 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *BackendSession.Packets
             try hold.push(self.gpa, bytes);
             continue;
         }
-        if (self.player.state == .resource_packs) try self.capturePacks(packet);
-        const sent = try batch.add(packet.kind, bytes) orelse continue;
+        if (self.player.state == .resource_packs) try self.capturePacks(kind, packet.bytes);
+        const sent = try batch.add(kind, bytes) orelse continue;
         if (sent.ptr != packet.bytes.ptr) intact = false;
-        if (packet.kind == .start_game) start_game = true;
+        if (kind == .start_game) start_game = true;
     }
     try batch.finish(frame, total, intact);
     if (start_game) try self.advance(.spawn_ready);
 }
 
-fn checkRegistry(self: *Managed, packet: BackendSession.Packet) !void {
+fn checkRegistry(self: *Managed, packet: []const u8) !void {
     var late: registries.Fingerprint = .{};
-    try late.record(try self.upstream.session.decodePacket(packet));
+    try late.record(try decode(packet));
     for (std.enums.values(registries.Kind)) |kind| {
         const value = late.get(kind) orelse continue;
         if (value != self.initial_registries.get(kind)) return error.IncompatibleRegistry;
     }
 }
 
-fn capturePacks(self: *Managed, packet: BackendSession.Packet) !void {
-    switch (packet.kind orelse return) {
-        .resource_packs_info => self.initial_packs.info = try packs.infoHash(try typed(try self.upstream.session.decodePacket(packet), .resource_packs_info)),
-        .resource_pack_stack => self.initial_packs.stack = try packs.stackHash(try typed(try self.upstream.session.decodePacket(packet), .resource_pack_stack)),
+fn capturePacks(self: *Managed, kind: ?protocol.PacketKind, packet: []const u8) !void {
+    switch (kind orelse return) {
+        .resource_packs_info => self.initial_packs.info = try packs.infoHash(try typed(try decode(packet), .resource_packs_info)),
+        .resource_pack_stack => self.initial_packs.stack = try packs.stackHash(try typed(try decode(packet), .resource_pack_stack)),
         else => {},
     }
 }
@@ -772,7 +783,7 @@ pub fn encodeTyped(buffer: []u8, packet: protocol.typed.Packet) ![]const u8 {
     return writer.written();
 }
 
-pub fn typed(envelope: protocol.BorrowedEnvelope, comptime kind: bedwire.PacketKind) !@FieldType(protocol.typed.Packet, @tagName(kind)) {
+pub fn typed(envelope: protocol.BorrowedEnvelope, comptime kind: protocol.PacketKind) !@FieldType(protocol.typed.Packet, @tagName(kind)) {
     if (envelope.value != .typed or envelope.value.typed != kind) return error.InvalidProfile;
     return @field(envelope.value.typed, @tagName(kind));
 }
@@ -927,4 +938,18 @@ test "typed plugin fields respect session phase and packet direction" {
     try std.testing.expect(checker.permits(.chunk_radius));
     managed.player.state = .disconnected;
     try std.testing.expect(!checker.permits(.text));
+}
+
+test "sessions hold packets to the side the protocol lets send them" {
+    const text = Current.packetId(.text).?;
+    const chunk = Current.packetId(.level_chunk).?;
+    const drag = Current.packetId(.serverbound_cursor_item_drag).?;
+    const seat = Current.packetId(.set_passenger_of_block).?;
+    try std.testing.expect(directions.permits(.client, text) and directions.permits(.server, text));
+    try std.testing.expect(directions.permits(.server, chunk) and !directions.permits(.client, chunk));
+    try std.testing.expect(directions.permits(.client, drag) and !directions.permits(.server, drag));
+    try std.testing.expect(directions.permits(.server, seat) and !directions.permits(.client, seat));
+    try std.testing.expect(directions.permits(.client, 1020) and directions.permits(.server, 1020));
+    try std.testing.expect(admits(.in_game, .client, text) and !admits(.in_game, .client, chunk));
+    try std.testing.expect(!admits(.resource_packs, .client, text));
 }

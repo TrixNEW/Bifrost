@@ -5,7 +5,7 @@ const fixtures = @import("fixtures.zig");
 const net = @import("net.zig");
 const sample = @import("sample.zig");
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const Current = protocol.Current;
 pub const Ecdsa = bedwire.crypto.spki.Ecdsa;
 const IpAddress = std.Io.net.IpAddress;
@@ -51,7 +51,7 @@ pub const Player = struct {
     current: ?[]u8 = null,
     timeout_ms: i64 = 5_000,
     game_packets: std.ArrayList([]u8) = .empty,
-    kinds: std.ArrayList(bedwire.PacketKind) = .empty,
+    kinds: std.ArrayList(protocol.PacketKind) = .empty,
     changes: std.ArrayList(protocol.packets.change_dimension.Packet) = .empty,
     actor_packets: std.ArrayList([]u8) = .empty,
     commands: ?[]u8 = null,
@@ -71,7 +71,7 @@ pub const Player = struct {
             .io = io,
             .connection = try fixtures.dialAs(io, address, key),
             .pool = pool,
-            .session = try .init(.client, .{ .pool = pool, .policy = bifrost.Managed.session_policy }),
+            .session = try .init(.client, .{ .pool = pool, .policy = bifrost.Managed.session_policy, .protocol_version = Current.protocol_number }),
             .key = key,
         };
         return self;
@@ -107,13 +107,22 @@ pub const Player = struct {
         try self.session.negotiateFromSettings(packets.next() orelse return error.NoPacket);
     }
 
+    pub fn refusedSettings(self: *Player, version: i32) !protocol.packets.play_status.PlayStatusType {
+        var buffer: [64]u8 = undefined;
+        try self.send(&.{try typedPacket(&buffer, .{ .request_network_settings = .{ .client_network_version = version } })});
+        var packets = try self.receive();
+        defer packets.deinit();
+        const packet = packets.next() orelse return error.NoPacket;
+        return (try Current.decodeBorrowed(packet.bytes, .{})).value.typed.play_status.status;
+    }
+
     // Signing ClientData with another key forges it
     pub fn sendLogin(self: *Player, name: []const u8, xuid: []const u8, client_data_signer: Ecdsa.KeyPair) !void {
         const request = try sample.request(gpa, self.key, client_data_signer, name, xuid, std.Io.Clock.real.now(self.io).toSeconds());
         defer gpa.free(request);
         const storage = try gpa.alloc(u8, request.len + 32);
         defer gpa.free(storage);
-        try self.send(&.{try bedwire.auth.login.encodeLoginPacket(Current, storage, request, limits)});
+        try self.send(&.{try bedwire.auth.login.encodeLoginPacket(Current.protocol_number, storage, request, limits)});
     }
 
     // Only the backend sends this, so the proxy logged in upstream too
@@ -122,7 +131,7 @@ pub const Player = struct {
         defer packets.deinit();
         const packet = packets.next() orelse return error.NoPacket;
         if (packet.kind != .play_status) return error.UnexpectedPacket;
-        const status = (try self.session.decodePacket(packet)).value.typed.play_status.status;
+        const status = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.play_status.status;
         if (status != .loginsuccess) return error.LoginRefused;
     }
 
@@ -135,7 +144,7 @@ pub const Player = struct {
             defer packets.deinit();
             const start = packets.next() orelse return error.NoPacket;
             if (start.kind != .start_game) return error.UnexpectedPacket;
-            break :blk (try self.session.decodePacket(start)).value.typed.start_game.runtime_id;
+            break :blk (try protocol.Current.decodeBorrowed(start.bytes, .{})).value.typed.start_game.runtime_id;
         };
         try self.session.advance(.spawn_ready);
         try self.send(&.{try typedPacket(&buffer, .{ .request_chunk_radius = .{ .chunk_radius = 8, .max_chunk_radius = 12 } })});
@@ -186,7 +195,7 @@ pub const Player = struct {
             var packets = try self.receive();
             defer packets.deinit();
             while (packets.next()) |packet| {
-                const kind = packet.kind orelse {
+                const kind = protocol.registry.packetKind(packet.id) orelse {
                     try self.game_packets.ensureUnusedCapacity(gpa, 1);
                     self.game_packets.appendAssumeCapacity(try gpa.dupe(u8, packet.bytes[2..]));
                     continue;
@@ -202,7 +211,7 @@ pub const Player = struct {
                     self.commands = copy;
                 }
                 if (kind == .change_dimension) {
-                    try self.changes.append(gpa, (try self.session.decodePacket(packet)).value.typed.change_dimension);
+                    try self.changes.append(gpa, (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.change_dimension);
                     acks += 1;
                 }
             }
@@ -229,7 +238,7 @@ pub const Player = struct {
         } })});
     }
 
-    pub fn last(self: *const Player, comptime kind: bedwire.PacketKind) !@FieldType(protocol.typed.Packet, @tagName(kind)) {
+    pub fn last(self: *const Player, comptime kind: protocol.PacketKind) !@FieldType(protocol.typed.Packet, @tagName(kind)) {
         var i = self.actor_packets.items.len;
         while (i > 0) {
             i -= 1;
@@ -254,12 +263,12 @@ pub const Player = struct {
         while (!std.mem.eql(u8, try self.nextGamePacket(&marker), "relayed")) {}
     }
 
-    pub fn received(self: *const Player, kind: bedwire.PacketKind) usize {
-        return std.mem.count(bedwire.PacketKind, self.kinds.items, &.{kind});
+    pub fn received(self: *const Player, kind: protocol.PacketKind) usize {
+        return std.mem.count(protocol.PacketKind, self.kinds.items, &.{kind});
     }
 
-    pub fn lastIndex(self: *const Player, kind: bedwire.PacketKind) ?usize {
-        return std.mem.lastIndexOfScalar(bedwire.PacketKind, self.kinds.items, kind);
+    pub fn lastIndex(self: *const Player, kind: protocol.PacketKind) ?usize {
+        return std.mem.lastIndexOfScalar(protocol.PacketKind, self.kinds.items, kind);
     }
 
     pub fn countGamePackets(self: *Player, suffix: []const u8, ms: i64) !usize {
@@ -293,7 +302,7 @@ pub const Player = struct {
 };
 
 pub const Backend = struct {
-    const Session = bifrost.Managed.BackendSession;
+    const Session = bedwire.Session;
 
     const Connection = struct {
         session: Session,
@@ -494,6 +503,7 @@ pub const Backend = struct {
             .cache_enabled = false,
             .cache_metadata = .empty,
             .serialized_chunk_data = "",
+            .is_client_biome_update = false,
         } });
         count += 3;
         if (world == .full and self.mode != .spawn_first) {
@@ -539,7 +549,7 @@ pub const Backend = struct {
         const connection = try gpa.create(Connection);
         errdefer gpa.destroy(connection);
         connection.* = .{
-            .session = try Session.init(.server, .{ .pool = self.pool, .policy = bifrost.Managed.session_policy }),
+            .session = try Session.init(.server, .{ .pool = self.pool, .policy = bifrost.Managed.session_policy, .features = bifrost.Managed.backend_features, .protocol_version = Current.protocol_number }),
             .carrier = client,
         };
         self.connections.appendAssumeCapacity(connection);
@@ -573,7 +583,7 @@ pub const Backend = struct {
         var packets = try session.ingest(frame);
         defer packets.deinit();
         var buffer: [512]u8 = undefined;
-        while (packets.next()) |packet| switch (packet.kind orelse {
+        while (packets.next()) |packet| switch (protocol.registry.packetKind(packet.id) orelse {
             if (std.mem.startsWith(u8, packet.bytes[2..], "relay")) {
                 try relay(session, carrier, packet.bytes[2 + "relay".len ..]);
                 continue;
@@ -594,7 +604,7 @@ pub const Backend = struct {
         }) {
             .text => try sendFrame(session, carrier, &.{packet.bytes}),
             .script_message => {
-                const script = (try session.decodePacket(packet)).value.typed.script_message;
+                const script = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.script_message;
                 try std.testing.expectEqualStrings("suko:staff_rank", script.message_id);
                 try std.testing.expectEqualStrings("Moderator", script.message_value);
                 _ = self.script_messages.fetchAdd(1, .release);
@@ -675,7 +685,7 @@ pub const Backend = struct {
                 try session.advance(.spawn_ready);
             },
             .request_chunk_radius => {
-                const request = (try session.decodePacket(packet)).value.typed.request_chunk_radius;
+                const request = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.request_chunk_radius;
                 self.requested_radius.store(request.chunk_radius, .release);
                 self.requested_max_radius.store(request.max_chunk_radius, .release);
                 if (session.state == .in_game) {
@@ -687,7 +697,7 @@ pub const Backend = struct {
                 _ = self.chunk_requests.fetchAdd(1, .release);
             },
             .client_cache_status => {
-                const status = (try session.decodePacket(packet)).value.typed.client_cache_status;
+                const status = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.client_cache_status;
                 self.cache_supported.store(status.is_cache_supported, .release);
                 _ = self.cache_reports.fetchAdd(1, .release);
             },

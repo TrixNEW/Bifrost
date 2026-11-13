@@ -1,11 +1,10 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
 const bifrost = @import("bifrost");
 const managed = @import("../support/managed.zig");
 const sample = @import("../support/sample.zig");
 const Rig = @import("../support/rig.zig").Rig;
 
-const protocol = bedwire.protocol;
+const protocol = @import("bedrock_protocol");
 const abi = bifrost.plugin_abi;
 const EntityLink = protocol.types.EntityLink;
 const typedPacket = sample.typedPacket;
@@ -39,7 +38,7 @@ fn movePlayer(buffer: []u8, runtime_id: u64, riding: u64) ![]const u8 {
 }
 
 fn animate(buffer: []u8, runtime_id: u64) ![]const u8 {
-    return typedPacket(buffer, .{ .animate = .{ .action = .swing, .target_actor_runtime_id = runtime_id, .data = 0, .swing_source = null } });
+    return typedPacket(buffer, .{ .animate = .{ .action = .swing, .target_actor_runtime_id = runtime_id, .data = 0, .swing_source = null, .hand = .mainhand } });
 }
 
 fn emote(buffer: []u8, runtime_id: u64) ![]const u8 {
@@ -76,6 +75,7 @@ test "server packets show the client its first ids, nested or not" {
             .actor_data = .empty,
             .synched_properties = .{ .int_entries_list = .empty, .float_entries_list = .empty },
             .actor_links = .init(&links),
+            .passenger_block_data = null,
         } }),
         try typedPacket(&buffers[2], .{ .set_actor_link = .{ .link = link(other, target_unique) } }),
         try typedPacket(&buffers[3], .{ .set_actor_data = .{ .target_runtime_id = target_runtime, .actor_data = .empty, .synched_properties = .{ .int_entries_list = .empty, .float_entries_list = .empty }, .tick = 0 } }),
@@ -99,6 +99,7 @@ test "server packets show the client its first ids, nested or not" {
             .synched_properties = .{ .int_entries_list = .empty, .float_entries_list = .empty },
             .abilities_data = abilities(other),
             .actor_links = .init(&links),
+            .passenger_block_data = null,
             .device_id = "",
             .build_platform = .unknown,
         } }),

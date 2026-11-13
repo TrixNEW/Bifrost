@@ -1,11 +1,12 @@
 const std = @import("std");
 const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const bifrost = @import("bifrost");
 const sample = @import("sample");
 const net = @import("net");
 const harness = @import("harness.zig");
 
-const Current = bedwire.protocol.Current;
+const Current = protocol.Current;
 const Ecdsa = bedwire.crypto.spki.Ecdsa;
 
 pub const limits: bedwire.Limits = .{
@@ -33,7 +34,7 @@ pub const Bedrock = struct {
         errdefer gpa.destroy(self);
         self.pool = try .init(gpa, limits, .conservative());
         errdefer self.pool.deinit();
-        self.session = try .init(.client, .{ .pool = &self.pool, .policy = bifrost.Managed.session_policy });
+        self.session = try .init(.client, .{ .pool = &self.pool, .policy = bifrost.Managed.session_policy, .protocol_version = protocol.protocol_version });
         errdefer self.session.deinit();
         self.gpa = gpa;
         self.key = try Ecdsa.KeyPair.generateDeterministic(@splat(seed));
@@ -88,7 +89,7 @@ pub fn join(gpa: std.mem.Allocator, io: std.Io, player: *harness.Player, address
         defer packets.deinit();
         const start = packets.next() orelse return error.NoPacket;
         if (start.kind != .start_game) return error.UnexpectedPacket;
-        break :blk (try session.decodePacket(start)).value.typed.start_game.runtime_id;
+        break :blk (try protocol.Current.decodeBorrowed(start.bytes, .{})).value.typed.start_game.runtime_id;
     };
     try session.advance(.spawn_ready);
     try bedrock.send(connection, try sample.typedPacket(&buffer, .{ .set_local_player_as_initialised = .{ .player_id = runtime_id } }));
@@ -101,7 +102,7 @@ fn next(connection: *net.Connection) ![]const u8 {
     return message.data;
 }
 
-fn expectKind(session: *bedwire.Session, frame: []const u8, kind: bedwire.PacketKind) !void {
+fn expectKind(session: *bedwire.Session, frame: []const u8, kind: protocol.PacketKind) !void {
     var packets = try session.ingest(frame);
     defer packets.deinit();
     const packet = packets.next() orelse return error.NoPacket;
@@ -109,7 +110,7 @@ fn expectKind(session: *bedwire.Session, frame: []const u8, kind: bedwire.Packet
 }
 
 pub const Backend = struct {
-    const Session = bifrost.Managed.BackendSession;
+    const Session = bedwire.Session;
 
     gpa: std.mem.Allocator,
     io: std.Io,
@@ -166,7 +167,7 @@ pub const Backend = struct {
     pub fn connected(self: *Backend, client: *net.Server.Client) !void {
         const session = try self.gpa.create(Session);
         errdefer self.gpa.destroy(session);
-        session.* = try Session.init(.server, .{ .pool = &self.pool, .policy = bifrost.Managed.session_policy });
+        session.* = try Session.init(.server, .{ .pool = &self.pool, .policy = bifrost.Managed.session_policy, .features = bifrost.Managed.backend_features, .protocol_version = protocol.protocol_version });
         client.user = session;
     }
 

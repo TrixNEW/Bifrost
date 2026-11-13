@@ -1,5 +1,5 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const bifrost = @import("bifrost");
 const sample = @import("sample");
 const harness = @import("harness.zig");
@@ -7,7 +7,7 @@ const bench_options = @import("bench_options");
 
 const abi = bifrost.plugin_abi;
 const Packets = bifrost.Plugins.Packets;
-const Current = bedwire.protocol.Current;
+const Current = protocol.Current;
 
 pub const Setup = enum {
     none,
@@ -213,7 +213,7 @@ const Checker = struct {
         return Packets.Decoded.decode(bytes, packet_type, .{});
     }
     pub fn valid(_: Checker, bytes: []const u8) bool {
-        const header = bedwire.protocol.packet.decode(bytes, .{ .max_packet_bytes = 1 << 20 }) catch return false;
+        const header = protocol.packet.decode(bytes, .{ .max_packet_bytes = 1 << 20 }) catch return false;
         if (Current.packetKind(header.header.packet_id) == null) return true;
         _ = Current.decodeBorrowed(bytes, .{}) catch return false;
         return true;

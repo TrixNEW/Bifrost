@@ -1,5 +1,5 @@
 const std = @import("std");
-const protocol = @import("bedwire").protocol;
+const protocol = @import("bedrock_protocol");
 const abi = @import("abi.zig");
 
 pub const Error = error{ Unsupported, InvalidArgument };

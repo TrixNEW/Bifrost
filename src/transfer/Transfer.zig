@@ -1,5 +1,5 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const Backend = @import("../backend/Backend.zig");
 const Dial = @import("../backend/Dial.zig");
 const Notify = @import("../net/Notify.zig");
@@ -228,10 +228,11 @@ fn receive(self: *Transfer, host: Host, frame: []const u8) !void {
         }
     }
     while (packets.next()) |packet| {
-        if (registries.isRegistry(packet.kind)) {
-            const decoded = try self.upstream.session.decodePacket(packet);
+        const kind = protocol.registry.packetKind(packet.id);
+        if (registries.isRegistry(kind)) {
+            const decoded = try Managed.decode(packet.bytes);
             try self.target_registries.record(decoded);
-            if (packet.kind == .start_game) {
+            if (kind == .start_game) {
                 const start = try Managed.typed(decoded, .start_game);
                 self.target_spawn = .{ .dimension = start.settings.spawn_settings.dimension, .position = finite(start.position) };
                 self.target_ids = .{ .runtime = start.runtime_id, .unique = start.entity_id };
@@ -242,22 +243,22 @@ fn receive(self: *Transfer, host: Host, frame: []const u8) !void {
         }
         if (self.seen.started) {
             // Queued, this would reach the player after the commit and kick them off both backends
-            if (packet.kind == .disconnect) return error.BackendRefused;
-            if (endsRegistries(packet.kind)) self.seen.world = true;
-            if (packet.kind == .play_status and (try Managed.typed(try self.upstream.session.decodePacket(packet), .play_status)).status == .playerspawn) {
+            if (kind == .disconnect) return error.BackendRefused;
+            if (endsRegistries(kind)) self.seen.world = true;
+            if (kind == .play_status and (try Managed.typed(try Managed.decode(packet.bytes), .play_status)).status == .playerspawn) {
                 self.seen.spawned = true;
                 continue;
             }
             try self.queue.push(host.gpa, packet.bytes);
             continue;
         }
-        switch (packet.kind orelse continue) {
+        switch (kind orelse continue) {
             .resource_packs_info => {
-                self.target_packs.info = try packs.infoHash(try Managed.typed(try self.upstream.session.decodePacket(packet), .resource_packs_info));
+                self.target_packs.info = try packs.infoHash(try Managed.typed(try Managed.decode(packet.bytes), .resource_packs_info));
                 try self.upstream.send(ctx, &.{try Managed.encodeTyped(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .downloading_finished = "" } } })});
             },
             .resource_pack_stack => {
-                self.target_packs.stack = try packs.stackHash(try Managed.typed(try self.upstream.session.decodePacket(packet), .resource_pack_stack));
+                self.target_packs.stack = try packs.stackHash(try Managed.typed(try Managed.decode(packet.bytes), .resource_pack_stack));
                 try self.upstream.send(ctx, &.{try Managed.encodeTyped(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .resource_pack_stack_finished = "" } } })});
                 try self.upstream.session.advance(.waiting_for_start_game);
             },
@@ -274,7 +275,7 @@ fn receive(self: *Transfer, host: Host, frame: []const u8) !void {
     }
 }
 
-fn endsRegistries(kind: ?bedwire.PacketKind) bool {
+fn endsRegistries(kind: ?protocol.PacketKind) bool {
     return switch (kind orelse return false) {
         .network_chunk_publisher_update, .level_chunk, .sub_chunk, .play_status => true,
         else => false,
@@ -388,7 +389,7 @@ pub fn syncClient(self: *Transfer, host: Host) !void {
     self.on(host, .client_synced);
 }
 
-fn finite(position: bedwire.protocol.Vec3f) bedwire.protocol.Vec3f {
+fn finite(position: protocol.Vec3f) protocol.Vec3f {
     if (std.math.isFinite(position.x) and std.math.isFinite(position.y) and std.math.isFinite(position.z)) return position;
     return .{ .x = 0, .y = 0, .z = 0 };
 }

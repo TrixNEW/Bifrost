@@ -7,6 +7,7 @@ const Context = struct {
     bifrost: *std.Build.Module,
     nethernet: *std.Build.Module,
     bedwire: *std.Build.Module,
+    protocol: *std.Build.Module,
     zio: *std.Build.Module,
     native_prefix: []const u8,
     sanitize_thread: bool,
@@ -57,6 +58,7 @@ pub fn build(b: *std.Build) void {
         .bifrost = undefined,
         .nethernet = undefined,
         .bedwire = undefined,
+        .protocol = undefined,
         .zio = undefined,
         .native_prefix = b.option([]const u8, "native-prefix", "Where tools/setup-native installed libdatachannel") orelse
             (b.root.joinString(b.allocator, ".deps/native") catch @panic("out of memory")),
@@ -65,6 +67,7 @@ pub fn build(b: *std.Build) void {
     };
     ctx.nethernet = b.dependency("nethernet", .{ .target = ctx.target, .optimize = ctx.optimize, .@"native-prefix" = ctx.native_prefix, .@"sanitize-thread" = ctx.sanitize_thread }).module("nethernet");
     ctx.bedwire = b.dependency("bedwire", .{ .target = ctx.target, .optimize = ctx.optimize, .libdeflate = ctx.libdeflate }).module("bedwire");
+    ctx.protocol = ctx.dependency("bedrock_protocol", "bedrock_protocol");
     ctx.zio = ctx.dependency("zio", "zio");
     ctx.bifrost = b.addModule("bifrost", .{
         .root_source_file = b.path("src/root.zig"),
@@ -74,6 +77,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "nethernet", .module = ctx.nethernet },
             .{ .name = "toml", .module = ctx.dependency("toml", "toml") },
             .{ .name = "bedwire", .module = ctx.bedwire },
+            .{ .name = "bedrock_protocol", .module = ctx.protocol },
         },
         .sanitize_thread = ctx.sanitize_thread,
     });
@@ -224,6 +228,7 @@ fn addTests(ctx: Context, plugin: Plugin) void {
         .{ .name = "bifrost", .module = ctx.bifrost },
         .{ .name = "nethernet", .module = ctx.nethernet },
         .{ .name = "bedwire", .module = ctx.bedwire },
+        .{ .name = "bedrock_protocol", .module = ctx.protocol },
         .{ .name = "zio", .module = ctx.zio },
         .{ .name = "bifrost_plugin_h", .module = plugin.header },
     }), .filters = filters });
@@ -272,8 +277,9 @@ fn addBench(ctx: Context, packet_filter: *std.Build.Step.Compile) void {
         .{ .name = "bifrost", .module = ctx.bifrost },
         .{ .name = "nethernet", .module = ctx.nethernet },
         .{ .name = "bedwire", .module = ctx.bedwire },
+        .{ .name = "bedrock_protocol", .module = ctx.protocol },
         .{ .name = "bench_options", .module = options.createModule() },
-        .{ .name = "sample", .module = ctx.module("tests/support/sample.zig", &.{.{ .name = "bedwire", .module = ctx.bedwire }}) },
+        .{ .name = "sample", .module = ctx.module("tests/support/sample.zig", &.{ .{ .name = "bedwire", .module = ctx.bedwire }, .{ .name = "bedrock_protocol", .module = ctx.protocol } }) },
         .{ .name = "net", .module = ctx.module("tests/support/net.zig", &.{.{ .name = "nethernet", .module = ctx.nethernet }}) },
     };
     // The driver keeps the default scheduler so only the proxy under test changes

@@ -1,5 +1,5 @@
 const std = @import("std");
-const bedwire = @import("bedwire");
+const protocol = @import("bedrock_protocol");
 const bifrost = @import("bifrost");
 const fixtures = @import("../support/fixtures.zig");
 const managed = @import("../support/managed.zig");
@@ -334,7 +334,7 @@ test "player API disconnect delivers a managed reason and transfers from non-wor
         var packets = try rig.player.receive();
         defer packets.deinit();
         while (packets.next()) |packet| if (packet.kind == .disconnect) {
-            const message = (try rig.player.session.decodePacket(packet)).value.typed.disconnect.messages.messages.message;
+            const message = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.disconnect.messages.messages.message;
             try std.testing.expectEqualStrings("Maintenance", message);
             found = true;
         };
@@ -700,13 +700,13 @@ test "a packet hook can pass, cancel or replace player packets" {
 }
 
 const Filter = struct {
-    const Current = bedwire.protocol.Current;
+    const Current = protocol.Current;
 
     fn init(host_api: *const abi.Host, plugin: *abi.Plugin) callconv(.c) abi.Status {
         plugin.name = .of("filter");
         plugin.plugin_version = .of("1.0.0");
         plugin.capabilities = .{ .packets = true };
-        for ([_]bedwire.PacketKind{ .add_painting, .container_open }) |kind| {
+        for ([_]protocol.PacketKind{ .add_painting, .container_open }) |kind| {
             const status = host_api.subscribe_packet(host_api.context, .from_backend, Current.packetId(kind).?, .any, .{}, cancel, null);
             if (status != .ok) return status;
         }
@@ -759,7 +759,7 @@ const StateHook = struct {
         plugin.name = .of("state-hook");
         plugin.plugin_version = .of("1");
         plugin.capabilities = .{ .packets = true };
-        const Current = bedwire.protocol.Current;
+        const Current = protocol.Current;
         const subscriptions = .{
             .{ Current.packetId(.set_local_player_as_initialised).?, abi.PacketPhase.before_game, spawn },
             .{ Current.packetId(.container_close).?, abi.PacketPhase.any, cancel },
@@ -918,7 +918,7 @@ fn sendTextPair(player: *managed.Player, original: []const u8, expected: []const
     var packets = try player.receive();
     defer packets.deinit();
     const packet = packets.next() orelse return error.NoPacket;
-    const decoded = (try player.session.decodePacket(packet)).value.typed.text;
+    const decoded = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.text;
     try std.testing.expectEqualStrings(expected, decoded.body.author_and_message.message);
     try std.testing.expectEqualStrings("Steve", decoded.body.author_and_message.player_name);
     try std.testing.expectEqualStrings("123", decoded.senders_xuid);
@@ -965,7 +965,7 @@ fn sendFilteredPackets(player: *managed.Player, backend: *managed.Backend) !void
         var packets = try player.receive();
         defer packets.deinit();
         while (packets.next()) |packet| {
-            const decoded = (try player.session.decodePacket(packet)).value.typed;
+            const decoded = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed;
             switch (decoded) {
                 .chunk_radius_updated => |updated| {
                     try std.testing.expect(!saw_radius);
@@ -1038,7 +1038,7 @@ test "the C++ chat guard example warns, cancels and finally removes a player" {
         while (!warned or !echoed) {
             var packets = try rig.player.receive();
             defer packets.deinit();
-            while (packets.next()) |packet| switch ((try rig.player.session.decodePacket(packet)).value.typed.text.body) {
+            while (packets.next()) |packet| switch ((try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.text.body) {
                 .message_only => |body| {
                     try std.testing.expect(!warned);
                     try std.testing.expectEqualStrings(warning, body.message);
@@ -1060,7 +1060,7 @@ test "the C++ chat guard example warns, cancels and finally removes a player" {
         defer packets.deinit();
         while (packets.next()) |packet| {
             if (packet.kind != .disconnect) return error.UnexpectedPacket;
-            const message = (try rig.player.session.decodePacket(packet)).value.typed.disconnect.messages.messages.message;
+            const message = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.disconnect.messages.messages.message;
             try std.testing.expectEqualStrings("Removed for repeated blocked messages", message);
             removed = true;
         }
@@ -1174,7 +1174,7 @@ fn injectPackets(rig: *Rig) !void {
         var packets = try rig.player.receive();
         defer packets.deinit();
         while (packets.next()) |packet| {
-            switch ((try rig.player.session.decodePacket(packet)).value.typed) {
+            switch ((try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed) {
                 .text => |text| {
                     try std.testing.expectEqualStrings(messages[texts], text.body.message_only.message);
                     texts += 1;
@@ -1212,7 +1212,7 @@ fn injectPackets(rig: *Rig) !void {
     var packets = try rig.player.receive();
     defer packets.deinit();
     const packet = packets.next() orelse return error.MissingPacket;
-    const text = (try rig.player.session.decodePacket(packet)).value.typed.text;
+    const text = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.text;
     try std.testing.expectEqualStrings(&message, text.body.message_only.message);
     try std.testing.expect(packets.next() == null);
 }
@@ -1368,11 +1368,11 @@ test "packet guards run before plugin commands" {
             plugin.name = .of("command-guard");
             plugin.plugin_version = .of("1");
             plugin.capabilities = .{ .packets = true };
-            return api.subscribe_packet(api.context, .from_player, bedwire.protocol.Current.packetId(.command_request).?, .in_game, .{}, inspect, null);
+            return api.subscribe_packet(api.context, .from_player, protocol.Current.packetId(.command_request).?, .in_game, .{}, inspect, null);
         }
 
         fn inspect(_: ?*anyopaque, packet: *abi.Packet) callconv(.c) abi.PacketAction {
-            const decoded = bedwire.protocol.Current.decodeBorrowed(packet.bytes.slice(), .{}) catch return .cancel;
+            const decoded = protocol.Current.decodeBorrowed(packet.bytes.slice(), .{}) catch return .cancel;
             const command = decoded.value.typed.command_request.command;
             if (!std.mem.endsWith(u8, command, "blocked")) return .pass;
             _ = blocked.fetchAdd(1, .release);
@@ -1401,7 +1401,7 @@ test "packet guards run before plugin commands" {
     try std.testing.expectEqual(@as(u32, 1), Commander.commands.load(.acquire));
 }
 
-const wire = bedwire.protocol.packets.available_commands;
+const wire = protocol.packets.available_commands;
 
 fn commandList(buffer: []u8, names: []const []const u8) ![]const u8 {
     var list: [4]wire.Command = undefined;
@@ -1427,7 +1427,7 @@ fn commandList(buffer: []u8, names: []const []const u8) ![]const u8 {
 }
 
 fn expectCommands(player: *managed.Player, expected: []const []const u8) !void {
-    const decoded = try bedwire.protocol.typed.decode(player.commands orelse return error.NotReceived, .{});
+    const decoded = try protocol.typed.decode(player.commands orelse return error.NotReceived, .{});
     var it = decoded.packet.available_commands.commands.iterator();
     var count: usize = 0;
     while (try it.next()) |command| : (count += 1) {
@@ -1837,7 +1837,7 @@ test "admission holds verified logins before the backend and resumes on the owni
         try io.sleep(.fromMilliseconds(10), .awake);
     }
     try std.testing.expectEqual(@backingInt(abi.Status.too_late), AdmissionPlugin.completion.load(.acquire));
-    try player.settings(@intCast(bedwire.protocol.Current.protocol_number));
+    try player.settings(@intCast(protocol.Current.protocol_number));
     try player.sendLogin("Steve", "2535400000000001", player.key);
     for (0..500) |_| {
         if (AdmissionPlugin.player.load(.acquire) != 0) break;
@@ -1871,7 +1871,7 @@ test "admission rejection never sends a login upstream" {
     defer running.deinit();
     const player = try managed.Player.connect(io, running.address(), 2);
     defer player.destroy();
-    try player.settings(@intCast(bedwire.protocol.Current.protocol_number));
+    try player.settings(@intCast(protocol.Current.protocol_number));
     try player.sendLogin("Steve", "2535400000000001", player.key);
     try player.awaitClosed();
     try std.testing.expectEqual(@as(u32, 0), backend.logins.load(.acquire));

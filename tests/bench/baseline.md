@@ -1384,5 +1384,5 @@ Raw relay, `-- relay`, one full run each: 64 B 1x1 at 2711 against 2702 round tr
 512 B 8x32 at 15770 against 14525 [11330-16350]. No allocations per round trip and no lost messages either way.
 Proxy CPU with 8 silent players reads 0.0% in both.
 
-Tests: 330 passed and 2 skipped in Debug, 332 of 332 in ReleaseSafe and in ReleaseFast, Windows only. Linux, TSan
-and a real client were not run for this version.
+Tests: 330 passed and 2 skipped in Debug on Windows and on Linux (WSL2), 332 of 332 in ReleaseSafe and in
+ReleaseFast on Windows. TSan, the Linux release modes and a real client were not run for this version.

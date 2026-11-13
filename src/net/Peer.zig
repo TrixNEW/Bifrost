@@ -30,7 +30,11 @@ pub fn destroy(self: *Peer) void {
 }
 
 pub fn open(self: *const Peer) bool {
-    return self.closing_since_ms == null and self.connection.state() == .connected;
+    return self.closing_since_ms == null and self.connected();
+}
+
+pub fn connected(self: *const Peer) bool {
+    return self.connection.state() == .connected;
 }
 
 pub fn send(self: *Peer, bytes: []const u8) !void {

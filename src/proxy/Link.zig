@@ -467,6 +467,12 @@ pub fn checkDeadlines(self: *Link, now_ms: u64) void {
     const session = &self.session.?;
     if (session.closing_since_ms != null) return self.env.scheduler.schedule(self);
     const deadlines = self.env.deadlines;
+    // Reading is what notices a player leaving, and a backed up backend holds reading off
+    if (!session.connected()) {
+        const since = self.player_closed_ms orelse now_ms;
+        self.player_closed_ms = since;
+        if (now_ms -| since >= deadlines.slow_player_ms) return self.playerGone();
+    }
     if (self.backlogged_since_ms) |since| {
         if (now_ms -| since >= deadlines.slow_player_ms) {
             self.env.stats.bump(.slow_players, 1);

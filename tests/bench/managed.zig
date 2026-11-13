@@ -80,7 +80,7 @@ pub fn join(gpa: std.mem.Allocator, io: std.Io, player: *harness.Player, address
     }
     const request = try sample.request(gpa, bedrock.key, bedrock.key, "Bench", "2535400000000001", std.Io.Clock.real.now(io).toSeconds());
     defer gpa.free(request);
-    try bedrock.send(connection, try bedwire.auth.login.encodeLoginPacket(Current, bedrock.scratch, request, limits));
+    try bedrock.send(connection, try bedwire.auth.login.encodeLoginPacket(Current.protocol_number, bedrock.scratch, request, limits));
     try expectKind(session, try next(connection), .play_status);
     try bedrock.send(connection, try sample.typedPacket(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .resource_pack_stack_finished = "" } } }));
     try session.advance(.waiting_for_start_game);
@@ -106,7 +106,7 @@ fn expectKind(session: *bedwire.Session, frame: []const u8, kind: protocol.Packe
     var packets = try session.ingest(frame);
     defer packets.deinit();
     const packet = packets.next() orelse return error.NoPacket;
-    if (packet.kind != kind) return error.UnexpectedPacket;
+    if (protocol.registry.packetKind(packet.id) != kind) return error.UnexpectedPacket;
 }
 
 pub const Backend = struct {
@@ -187,7 +187,7 @@ pub const Backend = struct {
         defer packets.deinit();
         var buffer: [512]u8 = undefined;
         self.packets.clearRetainingCapacity();
-        while (packets.next()) |packet| switch (packet.kind orelse {
+        while (packets.next()) |packet| switch (protocol.registry.packetKind(packet.id) orelse {
             self.packets.appendAssumeCapacity(packet.bytes);
             continue;
         }) {

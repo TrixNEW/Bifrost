@@ -91,8 +91,7 @@ next_ready: ?*Link = null,
 stage: Stage = .login,
 stage_since_ms: u64,
 backlogged_since_ms: ?u64 = null,
-parked: bool = false,
-park_node: std.DoublyLinkedList.Node = .{},
+player_closed_ms: ?u64 = null,
 dial_started_ns: u64 = 0,
 transfer_started_ns: u64 = 0,
 
@@ -116,7 +115,6 @@ pub fn create(env: *const Env, connection: *NetherNet.Connection, address: std.I
 }
 
 pub fn destroy(self: *Link) void {
-    self.env.scheduler.unpark(self);
     self.endTransfer(.player_left);
     self.env.events.disconnected(&self.player);
     self.cancelDial();
@@ -343,7 +341,6 @@ fn playerGone(self: *Link) void {
     // What the player sent last is still on its way to the backend
     if (self.backend) |*backend| backend.closeSoon(nowMs(self.env.io));
     self.pending.clear(self.env.gpa);
-    self.env.scheduler.unpark(self);
     self.env.scheduler.schedule(self);
 }
 
@@ -421,7 +418,6 @@ fn pumpBackend(self: *Link) void {
     if (self.transfer) |transfer| if (self.session) |*session| transfer.syncClient(self.transferHost(session)) catch |err| return self.fail(err);
     if (paused and self.stalled()) return self.pause();
     self.backlogged_since_ms = null;
-    self.env.scheduler.unpark(self);
     if (!drained) self.env.scheduler.schedule(self);
 }
 
@@ -434,13 +430,11 @@ fn discard(self: *Link, peer: *Peer) void {
 }
 
 // The backend isn't read until the player catches up, so its own flow control slows it down.
-// The player's drained callback wakes the link again.
+// The player's drained callback wakes the link again, and so does the sweep.
 fn pause(self: *Link) void {
-    if (self.backlogged_since_ms == null) {
-        self.backlogged_since_ms = nowMs(self.env.io);
-        self.env.stats.bump(.backlog_pauses, 1);
-    }
-    self.env.scheduler.park(self);
+    if (self.backlogged_since_ms != null) return;
+    self.backlogged_since_ms = nowMs(self.env.io);
+    self.env.stats.bump(.backlog_pauses, 1);
 }
 
 // Not reading the backend lets its own flow control slow it down.

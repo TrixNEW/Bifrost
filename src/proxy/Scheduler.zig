@@ -7,15 +7,19 @@ const Scheduler = @This();
 io: std.Io,
 wake: std.Io.Event = .unset,
 ready: std.atomic.Value(?*Link) = .init(null),
-// Worker only: links waiting for their player to drain
-backlogged: std.DoublyLinkedList = .{},
 
 pub fn schedule(self: *Scheduler, link: *Link) void {
-    if (link.queued.swap(true, .acq_rel)) return;
+    _ = self.push(link);
+}
+
+// False when the link was already queued, and whoever queued it has a service still to come.
+// seq_cst pairs with the worker clearing `queued` before it looks for work, so one of the two sees the other.
+fn push(self: *Scheduler, link: *Link) bool {
+    if (link.queued.load(.seq_cst) or link.queued.swap(true, .seq_cst)) return false;
     var head = self.ready.load(.monotonic);
     while (true) {
         link.next_ready = head;
-        head = self.ready.cmpxchgWeak(head, link, .release, .monotonic) orelse return;
+        head = self.ready.cmpxchgWeak(head, link, .release, .monotonic) orelse return true;
     }
 }
 
@@ -25,18 +29,6 @@ pub fn takeReady(self: *Scheduler) ?*Link {
 
 pub fn hasReady(self: *const Scheduler) bool {
     return self.ready.load(.monotonic) != null;
-}
-
-pub fn park(self: *Scheduler, link: *Link) void {
-    if (link.parked) return;
-    link.parked = true;
-    self.backlogged.append(&link.park_node);
-}
-
-pub fn unpark(self: *Scheduler, link: *Link) void {
-    if (!link.parked) return;
-    link.parked = false;
-    self.backlogged.remove(&link.park_node);
 }
 
 pub fn wakeNotify(self: *Scheduler) Notify {
@@ -52,9 +44,9 @@ fn wakeOnly(context: *anyopaque) void {
     self.wake.set(self.io);
 }
 
+// Whoever queues the link wakes the worker, so a burst costs one wake
 fn notifyLink(context: *anyopaque) void {
     const link: *Link = @ptrCast(@alignCast(context));
     const self = link.env.scheduler;
-    self.schedule(link);
-    self.wake.set(self.io);
+    if (self.push(link)) self.wake.set(self.io);
 }

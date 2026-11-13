@@ -343,6 +343,7 @@ fn drain(self: *Proxy) void {
         self.scheduler.wake.reset();
         for (self.links.values()) |link| self.scheduler.schedule(link);
         self.serviceReady() catch return;
+        if (self.scheduler.hasReady()) self.scheduler.wake.set(self.io);
     }
 }
 
@@ -386,7 +387,9 @@ fn serviceReady(self: *Proxy) error{Canceled}!void {
     while (next) |link| {
         // Grab next first, another task can push this link again once queued is cleared
         next = link.next_ready;
-        link.queued.store(false, .release);
+        // A full barrier: a plain store could still be in flight when the poll below finds nothing, and
+        // a notify racing with it would then see the link as queued and never wake it
+        link.queued.store(false, .seq_cst);
         try link.service();
         if (link.isFinished() and !link.queued.load(.acquire)) {
             const removed = self.links.swapRemove(link.id);

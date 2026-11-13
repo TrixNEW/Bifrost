@@ -162,6 +162,19 @@ pub fn stop(self: *Workers) void {
 }
 
 pub fn run(self: *Workers) !void {
+    const tasks = try self.gpa.alloc(std.Io.Future(void), self.proxies.len);
+    defer self.gpa.free(tasks);
+    var started: usize = 0;
+    defer for (tasks[0..started]) |*task| task.await(self.io);
+    errdefer self.stop();
+
+    // Workers start back to back, before anything else spawns, so a runtime that deals tasks out in turn
+    // gives each its own executor
+    for (self.proxies, tasks) |proxy, *task| {
+        task.* = try self.io.concurrent(runWorker, .{ self, proxy });
+        started += 1;
+    }
+
     var health_task = try self.io.concurrent(Health.run, .{ &self.health, self.io });
     defer health_task.cancel(self.io);
     var report_task = try self.io.concurrent(report, .{self});
@@ -169,16 +182,8 @@ pub fn run(self: *Workers) !void {
     var metrics_task: ?std.Io.Future(void) = if (self.metrics != null) try self.io.concurrent(serveMetrics, .{self}) else null;
     defer if (metrics_task) |*task| task.cancel(self.io);
 
-    const tasks = try self.gpa.alloc(std.Io.Future(void), self.proxies.len);
-    defer self.gpa.free(tasks);
-    var started: usize = 0;
-    defer for (tasks[0..started]) |*task| task.await(self.io);
-    errdefer self.stop();
-
-    for (self.proxies, tasks) |proxy, *task| {
-        task.* = try self.io.concurrent(runWorker, .{ self, proxy });
-        started += 1;
-    }
+    for (tasks) |*task| task.await(self.io);
+    started = 0;
 }
 
 pub fn totals(self: *const Workers) Stats {

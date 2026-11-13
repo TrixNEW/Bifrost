@@ -1386,3 +1386,41 @@ Proxy CPU with 8 silent players reads 0.0% in both.
 
 Tests: 330 passed and 2 skipped in Debug on Windows and on Linux (WSL2), 332 of 332 in ReleaseSafe and in
 ReleaseFast on Windows. TSan, the Linux release modes and a real client were not run for this version.
+
+## Bedwire 0.8.0 and protocol-zig, 2.0.0-rc.12
+
+Bifrost now takes packet codecs from protocol-zig 0.10.1 (Minecraft 1.26.60, protocol 2225) and sessions from
+Bedwire 0.8.0. Windows 11, Ryzen 5 5500, ReleaseFast, the rc.11 build (`0f083a5`) against this one, each run twice
+in alternating order. The table takes the better of the two runs for each build.
+
+`-- managed`, round trips/s, rc.11 / rc.12:
+
+| payload | load | passthrough | managed, transfers possible | managed, relayed | 1 decoded subscriber |
+|---|---|---|---|---|---|
+| 256 B | 1x1 | 3610 / 3657 | 3069 / 3229 | 3193 / 3164 | 3173 / 3207 |
+| 256 B | 8x32 | 15829 / 15912 | 12123 / 12259 | 12356 / 12654 | 12500 / 12625 |
+| 1 KiB | 1x1 | 3207 / 3362 | 3014 / 2953 | 2806 / 2926 | 2871 / 2921 |
+| 1 KiB | 8x32 | 19360 / 19497 | 11975 / 12159 | 11926 / 11217 | 10673 / 10998 |
+| 8 KiB | 1x1 | 905 / 930 | 806 / 813 | 804 / 798 | 807 / 807 |
+| 8 KiB | 8x32 | 2123 / 2095 | 2050 / 2068 | 2085 / 2058 | 2088 / 2101 |
+| 20 KiB | 1x1 | 425 / 421 | 356 / 354 | 356 / 358 | 358 / 357 |
+| 20 KiB | 8x12 | 906 / 906 | 881 / 855 | 863 / 877 | 885 / 875 |
+
+Every row is within 6% either way, which is what two runs of the same build differ by here. One of the four runs
+had its first three setups of every group 25 to 35% low, passthrough included, so a single run is not evidence.
+
+`-- decode ids injection`, ns per packet, rc.11 / rc.12, two runs each:
+
+| case | rc.11 | rc.12 |
+|---|---|---|
+| lazy decode | 69.1, 70.5 | 67.6, 67.8 |
+| independent decode | 688.7, 700.6 | 678.6, 679.7 |
+| shared decode | 101.1, 102.0 | 100.2, 100.2 |
+| typed replacement | 165.5, 165.6 | 155.4, 154.6 |
+| id swap, other actors | 25.2, 25.1 | 27.4, 25.5 |
+| id swap, the player | 73.2, 69.3 | 69.3, 72.7 |
+| injection, 1 KiB | 155.2, 185.4 | 158.6, 156.4 |
+
+The move changed which library decodes a packet and nothing about when one is decoded, and the numbers agree.
+
+Tests: the full suite and bench-test pass in Debug, ReleaseSafe and ReleaseFast on Windows. A real client, Linux and TSan were not run for this version.

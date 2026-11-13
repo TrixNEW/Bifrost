@@ -404,7 +404,9 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
   information, networking snapshots and the transport-level disconnect.
 - Typed fields cover Text and RequestChunkRadius. Injection also accepts PlayerSkin either way, ToastRequest, NetworkStackLatency, UpdateBlock, SetActorData, InventorySlot, ModalFormRequest and CorrectPlayerMovePrediction to players and ScriptMessage to backends. Other packets are raw bytes.
 - Every hook, command or tracking capability that needs in-game batches turns off the opaque relay for that
-  direction, and with more than one backend every batch is decoded anyway for transfers.
+  direction, and with more than one backend every batch is decoded anyway for transfers. A decoded batch that
+  no hook, command or ID translation changed still goes out as the frame it arrived in, so it pays for the
+  inflate but not for encoding and compressing again.
 - `run` callbacks share one pool of `[limits] plugin_task_threads` threads (128 tasks in total, 32 per plugin), so a blocking
   task delays everyone's.
 - Player-side networking rates, jitter, duplicate, out-of-order and anomaly counts are not available.

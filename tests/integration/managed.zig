@@ -88,7 +88,7 @@ test "matching compression relays in-game batches without decoding them" {
     try std.testing.expectEqual(@as(u64, 6), setup.running.stats().managed_relayed_batches);
 }
 
-test "with somewhere to transfer to, managed traffic is decoded" {
+test "with somewhere to transfer to, managed traffic is decoded but not encoded again" {
     const proxy_key = try managed.proxyKey(1);
     var keys = try managed.keySet();
     defer keys.deinit();
@@ -108,10 +108,30 @@ test "with somewhere to transfer to, managed traffic is decoded" {
     try player.login("Steve", "2535400000000001");
     try player.spawn();
     try player.echo(&@as([3000]u8, @splat('x')));
+    try player.echo(&@as([64 * 1024]u8, @splat('y')));
 
     running.stop();
-    try std.testing.expectEqual(@as(u64, 0), running.stats().managed_relayed_batches);
-    try std.testing.expect(running.stats().managed_decoded_batches != 0);
+    const stats = running.stats();
+    try std.testing.expectEqual(@as(u64, 0), stats.managed_relayed_batches);
+    try std.testing.expect(stats.managed_decoded_batches >= 4);
+    // Nothing touched the echoes, so all four went out as the frames they came in
+    try std.testing.expect(stats.managed_reused_batches >= 4);
+}
+
+test "a batch a plugin or the proxy changed is encoded again" {
+    var setup: Setup = undefined;
+    try setup.start(try trusted());
+    defer setup.deinit();
+
+    const player = try managed.Player.connect(io, setup.running.address(), 2);
+    defer player.destroy();
+    try player.login("Steve", "2535400000000001");
+    try player.spawn();
+    try player.echo(&@as([3000]u8, @splat('x')));
+
+    setup.running.stop();
+    // Snappy on the backend and deflate to the player can't share a frame
+    try std.testing.expectEqual(@as(u64, 0), setup.running.stats().managed_reused_batches);
 }
 
 test "a forged login never reaches the backend" {

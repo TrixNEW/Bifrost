@@ -293,8 +293,9 @@ fn snapshot(io: std.Io, workers: *bifrost.Workers, heap: *const harness.Counting
         .handshakes = totals.logins_observed,
         .gave_up = totals.observer_gave_up,
         .heap_bytes = heap.live.load(.monotonic),
-        .relayed = totals.managed_relayed_batches,
-        .decoded = totals.managed_decoded_batches,
+        // Batches that went out as the frame they came in, against those encoded again
+        .relayed = totals.managed_relayed_batches + totals.managed_reused_batches,
+        .decoded = totals.managed_decoded_batches - totals.managed_reused_batches,
         .allocations = heap.allocations.load(.monotonic),
         .workers = workers.proxies.len,
     };
@@ -1016,12 +1017,12 @@ fn managedScenario(env: *Env) !void {
         \\
         \\## Passthrough vs managed
         \\
-        \\Same echo workload as the raw relay, 1 worker, random payloads, deflate over 256 B on both legs. Decoded batches
-        \\are decrypted, decompressed, re-batched, compressed and encrypted again. Relayed batches are only re-encrypted.
-        \\Two backends make transfers possible, so every batch is decoded for client state tracking; active transfers and
-        \\runtime ID mapping always take that path. The decoded subscriber listens to player packets only.
+        \\Same echo workload as the raw relay, 1 worker, random payloads, deflate over 256 B on both legs. Relayed batches
+        \\are copied through unread. Two backends make transfers possible, so every batch is decompressed and read for
+        \\client state tracking, and one that nothing changed still goes out as the frame it came in. "As received" is
+        \\the share of batches that were not encoded again. The decoded subscriber listens to player packets only.
         \\
-        \\| payload | load | setup | round trips/s | MiB/s | p50 us | p95 us | p99 us | proxy CPU | allocs/rt | relayed |
+        \\| payload | load | setup | round trips/s | MiB/s | p50 us | p95 us | p99 us | proxy CPU | allocs/rt | as received |
         \\|---|---|---|---|---|---|---|---|---|---|---|
         \\
     , .{});

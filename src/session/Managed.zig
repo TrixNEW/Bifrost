@@ -255,6 +255,7 @@ const Batch = struct {
     to_player: bool,
     table: ?*const Packets.Table = null,
     count: usize = 0,
+    added: usize = 0,
 
     // Returns what was queued, or null if a plugin cancelled the packet
     fn add(self: *Batch, kind: ?bedwire.PacketKind, bytes: []const u8) !?[]const u8 {
@@ -299,7 +300,28 @@ const Batch = struct {
         }
         shared.batch[self.count] = packet;
         self.count += 1;
+        self.added += 1;
         return packet;
+    }
+
+    /// Ends a batch that came from one frame of `total` packets. If every one of them was queued as it
+    /// arrived, the frame goes out as it came in, which skips encoding and compressing it again.
+    fn finish(self: *Batch, frame: []const u8, total: usize, intact: bool) !void {
+        const managed = self.managed;
+        if (intact and total != 0 and self.added == total and self.count == total) {
+            const stats = self.ends.stats;
+            const reused = if (self.to_player)
+                managed.upstream.session.canRelayTo(&managed.player) and try relay(&managed.upstream.session, &managed.player, self.ends.player, stats, .bytes_to_player, frame)
+            else if (self.ends.backend) |backend|
+                managed.player.canRelayTo(&managed.upstream.session) and try relay(&managed.player, &managed.upstream.session, backend, stats, .bytes_to_backend, frame)
+            else
+                false;
+            if (reused) {
+                stats.bump(.managed_reused_batches, 1);
+                self.count = 0;
+            }
+        }
+        try self.flush();
     }
 
     fn flush(self: *Batch) !void {
@@ -361,11 +383,14 @@ pub fn sendDisconnect(self: *Managed, ends: Ends, reason: []const u8) !void {
 
 pub fn inject(self: *Managed, ends: Ends, target: abi.PacketTarget, packet: []const u8) !void {
     if (!self.inGame() or self.hold != null or self.syncing) return error.NotInGame;
+    const kind = Current.packetKind((try protocol.packet.decode(packet, protocolLimits())).header.packet_id);
     switch (target) {
-        .player => try self.sendToPlayer(ends, &.{packet}),
+        .player => {
+            try self.sendToPlayer(ends, &.{packet});
+            try self.sentToPlayer(kind, packet);
+        },
         .backend => {
             try self.upstream.send(self.upstreamContext(ends, ends.backend orelse return error.BackendClosed), &.{packet});
-            const kind = Current.packetKind((try protocol.packet.decode(packet, protocolLimits())).header.packet_id);
             _ = try self.sentToBackend(kind, packet);
         },
         else => return error.InvalidTarget,
@@ -474,14 +499,21 @@ fn relay(source: anytype, dest: anytype, sink: anytype, stats: *Stats, comptime 
     };
     stats.bump(counter, frame.bytes.len);
     stats.bump(messages(counter), 1);
+    return true;
+}
+
+fn relayed(stats: *Stats, payload: []const u8) void {
     stats.bump(.managed_relayed_batches, 1);
     stats.bump(.managed_relayed_bytes, payload.len);
-    return true;
 }
 
 pub fn fromPlayer(self: *Managed, ends: Ends, payload: []const u8) !void {
     if (self.relayable(.from_player)) if (ends.backend) |client| {
-        if (try relay(&self.player, &self.upstream.session, client, ends.stats, .bytes_to_backend, payload)) return;
+        if (try relay(&self.player, &self.upstream.session, client, ends.stats, .bytes_to_backend, payload)) {
+            relayed(ends.stats, payload);
+            // Nothing was inflated here, so the limit counts what came off the wire
+            return self.charge(ends, payload.len);
+        }
     };
     ends.stats.bump(.managed_decoded_batches, 1);
     ends.stats.bump(.managed_decoded_bytes, payload.len);
@@ -489,11 +521,8 @@ pub fn fromPlayer(self: *Managed, ends: Ends, payload: []const u8) !void {
     var packets = try self.player.ingest(payload);
     span.end();
     defer packets.deinit();
-    if (!self.inbound.take(Packets.now(ends.io) / std.time.ns_per_ms, packets.reader.bytes.len)) {
-        ends.stats.bump(.player_floods, 1);
-        return error.Flooding;
-    }
-    if (self.player_phase == .ready) return self.relayFromPlayer(ends, &packets);
+    try self.charge(ends, packets.reader.bytes.len);
+    if (self.player_phase == .ready) return self.relayFromPlayer(ends, &packets, payload);
 
     // Bedwire allows one packet per batch until the login is through
     const packet = packets.next() orelse return error.MalformedBatch;
@@ -509,9 +538,15 @@ pub fn fromPlayer(self: *Managed, ends: Ends, payload: []const u8) !void {
     }
 }
 
+fn charge(self: *Managed, ends: Ends, bytes: usize) !void {
+    if (self.inbound.take(Packets.now(ends.io) / std.time.ns_per_ms, bytes)) return;
+    ends.stats.bump(.player_floods, 1);
+    return error.Flooding;
+}
+
 pub fn fromBackend(self: *Managed, ends: Ends, payload: []const u8) !void {
     if (self.relayable(.from_backend)) {
-        if (try relay(&self.upstream.session, &self.player, ends.player, ends.stats, .bytes_to_player, payload)) return;
+        if (try relay(&self.upstream.session, &self.player, ends.player, ends.stats, .bytes_to_player, payload)) return relayed(ends.stats, payload);
     }
     ends.stats.bump(.managed_decoded_batches, 1);
     ends.stats.bump(.managed_decoded_bytes, payload.len);
@@ -519,7 +554,7 @@ pub fn fromBackend(self: *Managed, ends: Ends, payload: []const u8) !void {
     var packets = try self.upstream.session.ingest(payload);
     span.end();
     defer packets.deinit();
-    if (self.upstream.phase == .ready) return self.relayFromBackend(ends, &packets);
+    if (self.upstream.phase == .ready) return self.relayFromBackend(ends, &packets, payload);
 
     const packet = packets.next() orelse return error.MalformedBatch;
     const ctx = self.upstreamContext(ends, ends.backend orelse return error.BackendClosed);
@@ -543,7 +578,7 @@ pub fn fromBackend(self: *Managed, ends: Ends, payload: []const u8) !void {
             if (next_state) |state| try self.advance(state);
             // The player waits for this PlayStatus too, and packs may share its batch
             packets.reset();
-            try self.relayFromBackend(ends, &packets);
+            try self.relayFromBackend(ends, &packets, payload);
         },
     }
 }
@@ -592,11 +627,14 @@ fn authenticate(self: *Managed, ends: Ends, packet: PlayerSession.Packet) !void 
     self.client_data = client_data;
 }
 
-fn relayFromPlayer(self: *Managed, ends: Ends, packets: *PlayerSession.Packets) !void {
+fn relayFromPlayer(self: *Managed, ends: Ends, packets: *PlayerSession.Packets, frame: []const u8) !void {
     var next_state: ?bedwire.State = null;
     var batch = self.newBatch(ends, false);
     errdefer batch.discard();
+    var total: usize = 0;
+    var intact = true;
     while (packets.next()) |packet| {
+        total += 1;
         if (self.syncing) if (packet.kind) |kind| switch (kind) {
             .player_action => if (Handoff.isAck(try self.player.decodePacket(packet))) {
                 self.dimension_acks += 1;
@@ -610,9 +648,10 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *PlayerSession.Packets) 
             continue;
         }
         const sent = try batch.add(packet.kind, packet.bytes) orelse continue;
+        if (sent.ptr != packet.bytes.ptr) intact = false;
         if (try self.sentToBackend(packet.kind, sent)) |state| next_state = state;
     }
-    try batch.flush();
+    try batch.finish(frame, total, intact);
     if (next_state) |state| try self.advance(state);
     if (next_state == .in_game and !self.commands_sent) if (self.pluginCommands()) |plugins| {
         var arena: std.heap.ArenaAllocator = .init(self.gpa);
@@ -621,13 +660,16 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *PlayerSession.Packets) 
     };
 }
 
-fn relayFromBackend(self: *Managed, ends: Ends, packets: *BackendSession.Packets) !void {
+fn relayFromBackend(self: *Managed, ends: Ends, packets: *BackendSession.Packets, frame: []const u8) !void {
     var start_game = false;
     var batch = self.newBatch(ends, true);
     errdefer batch.discard();
     var arena: std.heap.ArenaAllocator = .init(self.gpa);
     defer arena.deinit();
+    var total: usize = 0;
+    var intact = true;
     while (packets.next()) |packet| {
+        total += 1;
         var bytes = packet.bytes;
         if (packet.kind == .available_commands) if (self.pluginCommands()) |plugins| {
             bytes = self.advertise(arena.allocator(), plugins, bytes) orelse bytes;
@@ -660,10 +702,11 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *BackendSession.Packets
             continue;
         }
         if (self.player.state == .resource_packs) try self.capturePacks(packet);
-        _ = try batch.add(packet.kind, bytes) orelse continue;
+        const sent = try batch.add(packet.kind, bytes) orelse continue;
+        if (sent.ptr != packet.bytes.ptr) intact = false;
         if (packet.kind == .start_game) start_game = true;
     }
-    try batch.flush();
+    try batch.finish(frame, total, intact);
     if (start_game) try self.advance(.spawn_ready);
 }
 

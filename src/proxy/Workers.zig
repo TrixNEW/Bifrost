@@ -198,6 +198,7 @@ pub fn writeMetrics(self: *const Workers, w: *std.Io.Writer) std.Io.Writer.Error
     try w.print("bifrost_bytes_total{{direction=\"to_backend\"}} {d}\nbifrost_bytes_total{{direction=\"to_player\"}} {d}\n", .{ totals_now.bytes_to_backend, totals_now.bytes_to_player });
     try Metrics.value(w, "managed_relayed_batches_total", "counter", "Managed batches relayed without decoding.", totals_now.managed_relayed_batches);
     try Metrics.value(w, "managed_decoded_batches_total", "counter", "Managed batches decoded.", totals_now.managed_decoded_batches);
+    try Metrics.value(w, "managed_reused_batches_total", "counter", "Decoded batches forwarded without encoding them again.", totals_now.managed_reused_batches);
     try Metrics.value(w, "player_buffered_bytes", "gauge", "Bytes waiting in the data channels to players.", totals_now.player_buffered_bytes);
     try Metrics.value(w, "unreliable_dropped_total", "counter", "Unreliable messages managed sessions dropped.", totals_now.unreliable_dropped);
     try Metrics.value(w, "queued_bytes", "gauge", "Bytes held in the shared pending budget.", self.budget.used.load(.monotonic));

@@ -1327,3 +1327,62 @@ Rejected:
   DTLS belong to zig-toml, nethernet and libdatachannel.
 - libxev: zio covers the event loop and Bifrost's own I/O is limited to signaling and health probes.
 - zig-gamedev/ztracy: `-Dtracy=true` already builds Tracy's client directly, see the allocation audit above.
+
+## Dependency update and unchanged batches, 2.0.0-rc.11
+
+Recorded 2026-11-12 on Windows 11, 12 logical CPUs, Zig 0.17.0, ReleaseFast. "Old" is rc.10 (nethernet 1.9.0, zio
+0.19.0) and "new" is rc.11 (nethernet 1.11.0, zio 0.20.1), built once each and run in turn on the same machine.
+
+Memory and joins, `-- connections`, three runs each:
+
+| | old | new |
+|---|---|---|
+| RSS per held player at 2000 players | 657 / 656 KiB | 382 / 380 / 382 KiB |
+| RSS held with 2000 players | 1323 MiB | 773 MiB |
+| joins/s, 100 players, first wave | 168 / 144 / 155 | 141 / 171 / 172 |
+| joins/s, 2000 players, first wave | 137 / 124 / 126 | 120 / 140 / 133 |
+| churn cycles/s, first round | 167 / 161 / 166 | 145 / 144 / 167 |
+| heap above fresh after two waves of 2000 left | 64812 B | 64812 B |
+
+The memory comes from nethernet 1.11: 16 SCTP streams instead of libdatachannel's default and 4 KiB DTLS records.
+Joins and churn are the same within the spread between runs.
+
+Managed relay, `-- managed --quick`, old and new alternated twice, round trips/s:
+
+| payload | load | old, transfers possible | new, transfers possible | old, relayed | new, relayed |
+|---|---|---|---|---|---|
+| 256 B | 1x1 | 3050 / 2944 | 2938 / 3034 | 2954 / 2802 | 2966 / 2962 |
+| 256 B | 8x32 | 9574 / 9732 | 9548 / 9712 | 9784 / 10082 | 9928 / 10060 |
+| 1 KiB | 1x1 | 2330 / 2330 | 2368 / 2370 | 2288 / 2334 | 2392 / 2336 |
+| 1 KiB | 8x32 | 7966 / 7948 | 7900 / 7928 | 8054 / 8232 | 8186 / 8182 |
+| 8 KiB | 1x1 | 586 / 580 | 590 / 588 | 586 / 586 | 572 / 584 |
+| 8 KiB | 8x32 | 1602 / 1628 | 1574 / 1634 | 1648 / 1608 | 1622 / 1570 |
+| 20 KiB | 1x1 | 256 / 258 | 258 / 258 | 258 / 258 | 258 / 254 |
+| 20 KiB | 8x12 | 658 / 672 | 674 / 656 | 662 / 688 | 676 / 690 |
+
+With transfers possible every batch is still decompressed and read, but one that nothing changed now goes out as the
+frame it came in: the "as received" column reads 100% where it used to read 0%. That skips one encode per batch,
+which `-- deflate` puts at 3.6 us for 256 B of game data, 11 us for 8 KiB and 60 us for 64 KiB. End to end it
+doesn't show. Decoded, relayed and passthrough rows all sit within a few percent of each other at every size, so
+libdatachannel and the bench's own client and backend set these numbers, not the proxy's codec work. The earlier
+full runs, taken while other work was using the machine, moved 10 to 25% between identical setups.
+
+Workers, `-- workers`, 64 players at 512 B with 8 in flight, round trips/s at 1 / 2 / 4 / 8 workers, two runs:
+
+| build | run 1 | run 2 |
+|---|---|---|
+| old, work stealing | 15.4k / 19.9k / 20.0k / 19.9k | 13.0k / 18.3k / 18.8k / 18.7k |
+| new, work stealing | 15.3k / 20.1k / 20.1k / 17.7k | 13.2k / 18.1k / 19.2k / 18.6k |
+| new, pinned | 15.0k / 19.4k / 20.0k / 19.7k | 13.4k / 19.0k / 20.0k / 19.5k |
+
+Two workers beat one by about a third and more add nothing, with proxy CPU flat near 430%: the shared native threads
+and the driver are the limit. Workers now start before the health, report and metrics tasks, so a runtime that
+deals tasks out in turn gives each worker its own executor. Pinned and work stealing are level at every count, and
+the two-worker collapse pinned showed on RakNet doesn't appear.
+
+Raw relay, `-- relay`, one full run each: 64 B 1x1 at 2711 against 2702 round trips/s with p50 362 against 357 us,
+512 B 8x32 at 15770 against 14525 [11330-16350]. No allocations per round trip and no lost messages either way.
+Proxy CPU with 8 silent players reads 0.0% in both.
+
+Tests: 330 passed and 2 skipped in Debug, 332 of 332 in ReleaseSafe and in ReleaseFast, Windows only. Linux, TSan
+and a real client were not run for this version.

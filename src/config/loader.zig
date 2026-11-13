@@ -230,6 +230,12 @@ fn readNetherNet(config: *Config, section: *const toml.Table, diag: *Diagnostic)
                 error.InvalidUrl => fail(diag, key, "expected stun:, turn: or turns: URLs up to {d} bytes", .{Config.max_ice_url_len}),
                 error.TooManyServers => fail(diag, key, "at most {d} servers", .{Config.max_ice_servers}),
             };
+        } else if (eql(key.name.?, "advertise_addresses")) {
+            if (value != .array) return fail(diag, key, "expected a list of public IP addresses", .{});
+            for (value.array.items) |item| config.addAdvertiseAddress(try string(diag, key, item)) catch |err| return switch (err) {
+                error.InvalidAddress => fail(diag, key, "expected distinct public IP addresses without a port", .{}),
+                error.TooManyAddresses => fail(diag, key, "at most {d} addresses", .{Config.max_advertise_addresses}),
+            };
         } else if (eql(key.name.?, "udp_mux")) {
             if (value != .boolean) return fail(diag, key, "expected true or false", .{});
             config.udp_mux = value.boolean;
@@ -408,6 +414,7 @@ test "full config reads every key" {
         \\port_max = 50100
         \\ice_bind = "127.0.0.1"
         \\ice_servers = ["stun:stun.example.com:3478"]
+        \\advertise_addresses = ["203.0.113.7", "2001:db8::7"]
         \\udp_mux = true
         \\max_negotiations = 16
         \\max_negotiations_per_ip = 2
@@ -430,6 +437,8 @@ test "full config reads every key" {
     try std.testing.expectEqual(@as(u16, 50100), config.port_max);
     try std.testing.expectEqualStrings("127.0.0.1", config.iceBind().?);
     try std.testing.expectEqualStrings("stun:stun.example.com:3478", config.iceServer(0));
+    try std.testing.expectEqual(@as(usize, 2), config.advertise_count);
+    try std.testing.expectEqualStrings("203.0.113.7", config.advertiseAddress(0));
     try std.testing.expect(config.udp_mux);
     try std.testing.expectEqual(@as(u32, 16), config.max_negotiations);
     try std.testing.expectEqual(@as(u32, 2), config.max_negotiations_per_ip);
@@ -482,6 +491,8 @@ test "invalid values name the offending key" {
     try expectInvalid("[nethernet]\nport_min = 50001\nport_max = 50000\n" ++ backend, "nethernet.port_max: set port_min and port_max together, with port_min <= port_max");
     try expectInvalid("[nethernet]\nice_servers = [\"http://x\"]\n" ++ backend, "nethernet.ice_servers: expected stun:, turn: or turns: URLs up to 255 bytes");
     try expectInvalid("[nethernet]\nice_bind = \"0.0.0.0:1\"\n" ++ backend, "nethernet.ice_bind: expected an IP address without a port, got \"0.0.0.0:1\"");
+    try expectInvalid("[nethernet]\nadvertise_addresses = [\"203.0.113.7:19132\"]\n" ++ backend, "nethernet.advertise_addresses: expected distinct public IP addresses without a port");
+    try expectInvalid("[nethernet]\nadvertise_addresses = \"203.0.113.7\"\n" ++ backend, "nethernet.advertise_addresses: expected a list of public IP addresses");
     try expectInvalid("[nethernet]\nudp_mux = 1\n" ++ backend, "nethernet.udp_mux: expected true or false");
     try expectInvalid("[nethernet]\nmax_negotiations = 0\n" ++ backend, "nethernet.max_negotiations: must be between 1 and 1024");
     try expectInvalid("[server]\nmax_players = 2\nmax_players_per_ip = 3\n" ++ backend, "server.max_players_per_ip: can't be more than max_players");

@@ -65,6 +65,21 @@ Quark logs `Trusting 1 proxy key(s)` at startup. With several Bifrost instances,
   confirm a new one.
 - **Only list proxies you run** in `trusted-proxy-keys`.
 
+## Behind Docker, Pterodactyl or NAT
+
+Players connect to the UDP ports Bifrost offers during signaling. In a container those are private addresses the
+player can't reach, so tell Bifrost its public IP and pin the ports:
+
+```toml
+[nethernet]
+port_min = 50000
+port_max = 50100
+advertise_addresses = ["203.0.113.10"]
+```
+
+Forward that UDP range with the same port numbers on both sides, plus the TCP signaling port from `bind`. The
+addresses are IP literals without a port, at most 8, and Bifrost adds them beside what ICE finds on its own.
+
 ## Other modes
 
 | setup | use it for | what Quark sees |

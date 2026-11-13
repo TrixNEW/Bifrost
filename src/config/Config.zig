@@ -1,4 +1,5 @@
 const std = @import("std");
+const nethernet = @import("nethernet");
 const Backend = @import("../backend/Backend.zig");
 const content = @import("../content/policy.zig");
 const IpAddress = std.Io.net.IpAddress;
@@ -10,6 +11,8 @@ pub const max_workers = 64;
 pub const max_motd_len = 256;
 pub const max_ice_servers = 4;
 pub const max_ice_url_len = 255;
+pub const max_advertise_addresses = nethernet.advertise.maximum_addresses;
+pub const max_advertise_address_len = 45;
 pub const max_path_len = 1024;
 pub const max_disabled_plugins = 16;
 pub const max_plugin_dir_name = 255;
@@ -67,6 +70,9 @@ ice_bind_len: usize = 0,
 ice_server_storage: [max_ice_servers][max_ice_url_len]u8 = undefined,
 ice_server_lens: [max_ice_servers]u8 = undefined,
 ice_server_count: usize = 0,
+advertise_storage: [max_advertise_addresses][max_advertise_address_len]u8 = undefined,
+advertise_lens: [max_advertise_addresses]u8 = undefined,
+advertise_count: usize = 0,
 udp_mux: bool = false,
 max_negotiations: u32 = 32,
 max_negotiations_per_ip: u32 = 4,
@@ -133,6 +139,23 @@ pub fn addIceServer(self: *Config, url: []const u8) error{ InvalidUrl, TooManySe
     @memcpy(self.ice_server_storage[self.ice_server_count][0..url.len], url);
     self.ice_server_lens[self.ice_server_count] = @intCast(url.len);
     self.ice_server_count += 1;
+}
+
+pub fn advertiseAddress(self: *const Config, index: usize) []const u8 {
+    return self.advertise_storage[index][0..self.advertise_lens[index]];
+}
+
+pub fn addAdvertiseAddress(self: *Config, address: []const u8) error{ InvalidAddress, TooManyAddresses }!void {
+    if (self.advertise_count == max_advertise_addresses) return error.TooManyAddresses;
+    if (address.len > max_advertise_address_len) return error.InvalidAddress;
+    var all: [max_advertise_addresses][]const u8 = undefined;
+    for (all[0..self.advertise_count], 0..) |*known, i| known.* = self.advertiseAddress(i);
+    all[self.advertise_count] = address;
+    // NetherNet checks the list as a whole, duplicates included
+    _ = nethernet.advertise.Addresses.parse(all[0 .. self.advertise_count + 1]) catch return error.InvalidAddress;
+    @memcpy(self.advertise_storage[self.advertise_count][0..address.len], address);
+    self.advertise_lens[self.advertise_count] = @intCast(address.len);
+    self.advertise_count += 1;
 }
 
 pub fn motd(self: *const Config) []const u8 {
@@ -245,6 +268,13 @@ test "ICE settings are checked as they are set" {
     try std.testing.expectError(error.TooManyServers, config.addIceServer("stun:one.more"));
     try config.setIceBind("10.0.0.2");
     try std.testing.expectError(error.InvalidAddress, config.setIceBind("not an address"));
+    try config.addAdvertiseAddress("203.0.113.7");
+    try config.addAdvertiseAddress("2001:db8::7");
+    try std.testing.expectEqualStrings("2001:db8::7", config.advertiseAddress(1));
+    for ([_][]const u8{ "203.0.113.7", "203.0.113.7:19132", "[2001:db8::8]", "0.0.0.0", "224.0.0.1", "example.com" }) |bad| {
+        try std.testing.expectError(error.InvalidAddress, config.addAdvertiseAddress(bad));
+    }
+    try std.testing.expectEqual(@as(usize, 2), config.advertise_count);
     config.port_min = 50000;
     try std.testing.expectError(error.NoBackends, config.validate());
     try config.addBackend(null, .{ .ip4 = .loopback(1) });

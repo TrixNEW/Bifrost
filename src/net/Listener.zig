@@ -17,6 +17,8 @@ pub const ServerStatus = nethernet.EndpointServerStatus;
 pub const Options = struct {
     max_negotiations: u32 = 32,
     max_negotiations_per_ip: u32 = 4,
+    // Public addresses a NAT or port forward exposes the ICE ports on
+    advertise_addresses: []const []const u8 = &.{},
     status: ?Status = null,
 };
 
@@ -34,6 +36,7 @@ pub fn start(gpa: std.mem.Allocator, io: std.Io, transport: *NetherNet, address:
         .maximum_negotiations_per_address = options.max_negotiations_per_ip,
         .maximum_http_workers = @max(options.max_negotiations, 8),
         .status_provider = options.status,
+        .advertise_addresses = options.advertise_addresses,
     });
     errdefer endpoint.destroy();
     self.* = .{ .io = io, .endpoint = endpoint, .sink = sink };

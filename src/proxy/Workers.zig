@@ -100,9 +100,12 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         });
         created += 1;
     }
+    var advertised: [Config.max_advertise_addresses][]const u8 = undefined;
+    for (advertised[0..config.advertise_count], 0..) |*address, i| address.* = config.advertiseAddress(i);
     self.listener = try Listener.start(gpa, io, &self.transport, config.bind, .{ .context = self, .accept = dispatch }, .{
         .max_negotiations = config.max_negotiations,
         .max_negotiations_per_ip = config.max_negotiations_per_ip,
+        .advertise_addresses = advertised[0..config.advertise_count],
         .status = .{ .context = self, .get = serverStatus },
     });
     return self;

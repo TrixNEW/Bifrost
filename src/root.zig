@@ -4,6 +4,7 @@ const Observer = @import("protocol/Observer.zig");
 
 pub const version = @import("build_options").version;
 pub const Config = @import("config/Config.zig");
+pub const log = @import("log.zig");
 pub const Diagnostic = loader.Diagnostic;
 pub const loadConfig = loader.loadFile;
 pub const parseConfig = loader.parse;
@@ -26,6 +27,7 @@ pub const readKeys = Observer.readKeys;
 pub const parseKeys = Observer.parseKeys;
 pub const loadIdentity = @import("nethernet").identity_file.loadOrCreate;
 pub const setNativeThreads = @import("nethernet").Peer.setNativeThreadPoolSize;
+pub const enableNativeTrace = @import("nethernet").Peer.enableNativeTrace;
 pub const Managed = @import("session/Managed.zig");
 pub const Plugins = @import("plugin/Plugins.zig");
 pub const plugin_abi = @import("plugin/abi.zig");
@@ -43,6 +45,7 @@ pub fn tuneAllocator() void {
 extern "c" fn mallopt(param: c_int, value: c_int) c_int;
 
 test {
+    _ = log;
     _ = Proxy;
     _ = Config;
     _ = loader;

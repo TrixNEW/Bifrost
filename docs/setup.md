@@ -80,6 +80,27 @@ advertise_addresses = ["203.0.113.10"]
 Forward that UDP range with the same port numbers on both sides, plus the TCP signaling port from `bind`. The
 addresses are IP literals without a port, at most 8, and Bifrost adds them beside what ICE finds on its own.
 
+## Logging
+
+```toml
+[logging]
+level = "info"          # error, warn, info, debug, trace
+color = "auto"          # auto, always, never
+timestamps = true
+file = "logs/bifrost.log"
+file_level = "debug"
+file_max_mb = 16
+```
+
+`info` covers startup, players joining, moving and leaving, and backends going down or coming back. `debug` adds
+routing, dial times, handshake stages and why a connection closed before login. `trace` adds transfer state steps
+and NetherNet's own signaling and WebRTC diagnostics, which print unformatted and only to the console.
+
+`auto` colors only a terminal and honors `NO_COLOR`. Pterodactyl's console renders ANSI, so set `color = "always"`
+if it shows plain text, and `timestamps = false` when something else already stamps each line. The file never has
+colors. Each start moves the previous log to `<file>.1`, and so does reaching `file_max_mb`, so the two files
+never take more than twice that.
+
 ## Other modes
 
 | setup | use it for | what Quark sees |

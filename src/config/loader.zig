@@ -2,6 +2,7 @@ const std = @import("std");
 const toml = @import("toml");
 const Backend = @import("../backend/Backend.zig");
 const Config = @import("Config.zig");
+const log = @import("../log.zig");
 const IpAddress = std.Io.net.IpAddress;
 
 pub const max_file_size = 64 * 1024;
@@ -125,10 +126,43 @@ fn readRoot(config: *Config, root: *const toml.Table, diag: *Diagnostic) Error!v
             try readNetherNet(config, try table(diag, key, value), diag);
         } else if (eql(name, "plugins")) {
             try readPlugins(config, try table(diag, key, value), diag);
+        } else if (eql(name, "logging")) {
+            try readLogging(config, try table(diag, key, value), diag);
         } else if (eql(name, "plugin")) {
             return fail(diag, key, "[[plugin]] path is gone; put native libraries with embedded manifests directly in plugins/", .{});
         } else return fail(diag, key, "unknown section", .{});
     }
+}
+
+fn readLogging(config: *Config, section: *const toml.Table, diag: *Diagnostic) Error!void {
+    var it = section.iterator();
+    while (it.next()) |entry| {
+        const key: Key = .{ .section = "logging", .name = entry.key_ptr.* };
+        const value = entry.value_ptr.*;
+        if (eql(key.name.?, "level")) {
+            config.log_level = try level(diag, key, value);
+        } else if (eql(key.name.?, "file_level")) {
+            config.log_file_level = try level(diag, key, value);
+        } else if (eql(key.name.?, "color")) {
+            const text = try string(diag, key, value);
+            config.log_color = std.meta.stringToEnum(log.Color, text) orelse
+                return fail(diag, key, "expected \"auto\", \"always\" or \"never\", got \"{s}\"", .{text});
+        } else if (eql(key.name.?, "timestamps")) {
+            if (value != .boolean) return fail(diag, key, "expected true or false", .{});
+            config.log_timestamps = value.boolean;
+        } else if (eql(key.name.?, "file")) {
+            config.setLogFile(try string(diag, key, value)) catch
+                return fail(diag, key, "must be at most {d} bytes", .{Config.max_path_len});
+        } else if (eql(key.name.?, "file_max_mb")) {
+            config.log_file_max_mb = try integer(u32, diag, key, value, 1, 4096);
+        } else return fail(diag, key, "unknown key", .{});
+    }
+}
+
+fn level(diag: *Diagnostic, key: Key, value: toml.Value) Error!log.Level {
+    const text = try string(diag, key, value);
+    return log.Level.parse(text) orelse
+        fail(diag, key, "expected \"error\", \"warn\", \"info\", \"debug\" or \"trace\", got \"{s}\"", .{text});
 }
 
 fn readPlugins(config: *Config, section: *const toml.Table, diag: *Diagnostic) Error!void {
@@ -555,6 +589,35 @@ test "transfer section sets the timeouts" {
     try expectInvalid("[transfer]\ncontent = \"latest\"\n" ++ backend, "transfer.content: expected \"initial\" or \"match\", got \"latest\"");
     const matching = try parse(std.testing.allocator, "[transfer]\ncontent = \"match\"\n" ++ backend, &diag);
     try std.testing.expectEqual(.match, matching.content_policy);
+}
+
+test "logging section sets levels, color and the file" {
+    var diag: Diagnostic = .{};
+    const backend = "[[backend]]\naddress = \"127.0.0.1:1\"\n";
+    const defaults = (try parse(std.testing.allocator, backend, &diag)).logSettings();
+    try std.testing.expectEqual(log.Level.info, defaults.level);
+    try std.testing.expect(defaults.file == null);
+    const config = try parse(std.testing.allocator,
+        \\[logging]
+        \\level = "debug"
+        \\color = "never"
+        \\timestamps = false
+        \\file = "logs/bifrost.log"
+        \\file_level = "trace"
+        \\file_max_mb = 8
+        \\
+    ++ backend, &diag);
+    const settings = config.logSettings();
+    try std.testing.expectEqual(log.Level.debug, settings.level);
+    try std.testing.expectEqual(log.Color.never, settings.color);
+    try std.testing.expect(!settings.timestamps);
+    try std.testing.expectEqualStrings("logs/bifrost.log", settings.file.?);
+    try std.testing.expectEqual(log.Level.trace, settings.file_level);
+    try std.testing.expectEqual(@as(u64, 8 * 1024 * 1024), settings.file_max_bytes);
+    try std.testing.expect((try parse(std.testing.allocator, "[logging]\nfile = \"\"\n" ++ backend, &diag)).logSettings().file == null);
+    try expectInvalid("[logging]\nlevel = \"loud\"\n" ++ backend, "logging.level: expected \"error\", \"warn\", \"info\", \"debug\" or \"trace\", got \"loud\"");
+    try expectInvalid("[logging]\ncolor = \"yes\"\n" ++ backend, "logging.color: expected \"auto\", \"always\" or \"never\", got \"yes\"");
+    try expectInvalid("[logging]\nfile_max_mb = 0\n" ++ backend, "logging.file_max_mb: must be between 1 and 4096");
 }
 
 test "plugins section picks the directory and disables filename stems" {

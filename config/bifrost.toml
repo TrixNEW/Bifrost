@@ -75,6 +75,19 @@ max_concurrent = 64
 # "initial" keeps the first backend's packs for the whole session; "match" also needs every target to offer the same
 content = "initial"
 
+[logging]
+# error, warn, info, debug or trace. debug shows connection stages and routing, trace adds NetherNet signaling
+# and WebRTC detail
+level = "info"
+# "auto" colors only a terminal and honors NO_COLOR; "always" suits consoles like Pterodactyl's that render ANSI
+color = "auto"
+# Turn off when the host already stamps each line, as journald and docker logs do
+timestamps = true
+# Plain text, no colors; empty disables it. At file_max_mb it moves to <file>.1, replacing the older one
+file = ""
+file_level = "info"
+file_max_mb = 16
+
 [[backend]]
 # Defaults to the address. Backends speak NetherNet too, this is their HTTP signaling address
 name = "lobby"

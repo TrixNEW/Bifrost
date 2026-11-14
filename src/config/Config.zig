@@ -2,6 +2,7 @@ const std = @import("std");
 const nethernet = @import("nethernet");
 const Backend = @import("../backend/Backend.zig");
 const content = @import("../content/policy.zig");
+const log = @import("../log.zig");
 const IpAddress = std.Io.net.IpAddress;
 
 const Config = @This();
@@ -76,6 +77,13 @@ advertise_count: usize = 0,
 udp_mux: bool = false,
 max_negotiations: u32 = 32,
 max_negotiations_per_ip: u32 = 4,
+log_level: log.Level = .info,
+log_color: log.Color = .auto,
+log_timestamps: bool = true,
+log_file_storage: [max_path_len]u8 = undefined,
+log_file_len: usize = 0,
+log_file_level: log.Level = .info,
+log_file_max_mb: u32 = 16,
 
 pub const Auth = enum {
     off,
@@ -86,6 +94,23 @@ pub const SessionMode = enum {
     passthrough,
     managed,
 };
+
+pub fn logSettings(self: *const Config) log.Settings {
+    return .{
+        .level = self.log_level,
+        .color = self.log_color,
+        .timestamps = self.log_timestamps,
+        .file = if (self.log_file_len == 0) null else self.log_file_storage[0..self.log_file_len],
+        .file_level = self.log_file_level,
+        .file_max_bytes = @as(u64, self.log_file_max_mb) * 1024 * 1024,
+    };
+}
+
+pub fn setLogFile(self: *Config, path: []const u8) error{InvalidPath}!void {
+    if (path.len > max_path_len) return error.InvalidPath;
+    @memcpy(self.log_file_storage[0..path.len], path);
+    self.log_file_len = path.len;
+}
 
 pub fn keysFile(self: *const Config) ?[]const u8 {
     return if (self.keys_file_len == 0) null else self.keys_file_storage[0..self.keys_file_len];

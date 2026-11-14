@@ -74,6 +74,10 @@ timeout_ms = 15000
 max_concurrent = 64
 # "initial" keeps the first backend's packs for the whole session; "match" also needs every target to offer the same
 content = "initial"
+# A backend's Transfer packet to a listed backend moves the player inside the proxy. To anywhere else it's
+# dropped unless this is true, since that server would get the player's signed login. Managed sessions only
+external = false
+
 [routing]
 # Backends new players join. Unset, only the first [[backend]] takes them
 join = ["lobby"]

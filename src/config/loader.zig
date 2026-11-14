@@ -349,6 +349,9 @@ fn readTransfer(config: *Config, section: *const toml.Table, diag: *Diagnostic) 
             config.transfer_timeout_ms = try integer(u32, diag, key, value, 100, 300_000);
         } else if (eql(key.name.?, "max_concurrent")) {
             config.max_transfers = try integer(u32, diag, key, value, 1, 100_000);
+        } else if (eql(key.name.?, "external")) {
+            if (value != .boolean) return fail(diag, key, "expected true or false", .{});
+            config.external_transfers = value.boolean;
         } else if (eql(key.name.?, "content")) {
             const text = try string(diag, key, value);
             config.content_policy = std.meta.stringToEnum(@TypeOf(config.content_policy), text) orelse

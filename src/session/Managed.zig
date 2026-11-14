@@ -5,6 +5,7 @@ const Budget = @import("../proxy/Budget.zig");
 const PacketQueue = @import("../proxy/PacketQueue.zig");
 const Rate = @import("../proxy/Rate.zig");
 const Keys = @import("../protocol/Keys.zig");
+const Backend = @import("../backend/Backend.zig");
 const Stats = @import("../proxy/Stats.zig");
 const packs = @import("../content/packs.zig");
 pub const registries = @import("../content/registries.zig");
@@ -73,6 +74,9 @@ pub const Shared = struct {
     budget: ?*Budget = null,
     logins: ?*Rate = null,
     player_bytes_per_second: u32 = 0,
+    // Where a backend's Transfer packets may send players: a listed backend becomes a proxy transfer
+    backends: []const Backend = &.{},
+    external_transfers: bool = false,
 
     pub fn init(gpa: std.mem.Allocator, key: Ecdsa.KeyPair, keys: *Keys) !Shared {
         // libdeflate's level 1 is about twice as fast as its level 3 with the same output on game traffic
@@ -135,6 +139,8 @@ chunk_radius: ?struct { radius: i32, max: u8 } = null,
 cache_supported: ?bool = null,
 plugin_player: abi.Player = .{},
 commands_sent: bool = false,
+// A backend asked to send the player to this one, which the link turns into a proxy transfer
+redirect: ?Backend.Id = null,
 // Player packets sent before the backend is ready
 early: PacketQueue,
 inbound: Rate = .unlimited,
@@ -234,6 +240,10 @@ pub fn deliver(self: *Managed, ends: Ends, packets: []const []const u8) !usize {
         };
         const kind = Current.packetKind(header.header.packet_id);
         if (!admits(self.player.state, .server, header.header.packet_id)) {
+            skipped += 1;
+            continue;
+        }
+        if (kind == .transfer and try self.redirects(ends, packet)) {
             skipped += 1;
             continue;
         }
@@ -737,6 +747,7 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
                 continue;
             }
         }
+        if (kind == .transfer and try self.redirects(ends, packet.bytes)) continue;
         if (registries.isRegistry(kind)) {
             if (self.transferred) {
                 try self.checkRegistry(packet.bytes);
@@ -765,6 +776,34 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
     }
     try batch.finish(frame, total, intact);
     if (start_game) try self.advance(.spawn_ready);
+}
+
+// A Transfer to a listed backend moves the player inside the proxy. Anywhere else would hand a server the
+// player doesn't know about a fresh Microsoft-signed login, so it's dropped unless allowed.
+fn redirects(self: *Managed, ends: Ends, packet: []const u8) !bool {
+    const transfer = try typed(try decode(packet), .transfer);
+    if (findBackend(self.shared.backends, transfer.server_address, transfer.server_port)) |id| {
+        ends.stats.bump(.backend_redirects, 1);
+        if (self.redirect == null) self.redirect = id;
+        return true;
+    }
+    if (self.shared.external_transfers) return false;
+    ends.stats.bump(.redirects_blocked, 1);
+    session_log.warn("Dropped a backend's transfer of {s} to {s}:{d}, which isn't a [[backend]] ([transfer] external = true allows it)", .{ self.displayName(), transfer.server_address, transfer.server_port });
+    return true;
+}
+
+fn findBackend(backends: []const Backend, host: []const u8, port: u16) ?Backend.Id {
+    const address = std.Io.net.IpAddress.parse(host, port) catch null;
+    for (backends, 0..) |*backend, i| {
+        if (std.mem.eql(u8, backend.name(), host)) return .of(i);
+        if (address) |ip| if (ip.eql(&backend.address)) return .of(i);
+    }
+    return null;
+}
+
+fn displayName(self: *const Managed) []const u8 {
+    return if (self.identity) |identity| identity.display_name else "a player";
 }
 
 fn checkRegistry(self: *Managed, packet: []const u8) !void {

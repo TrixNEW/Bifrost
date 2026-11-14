@@ -101,7 +101,10 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         ),
     };
     errdefer if (managed) |*shared| shared.deinit(gpa);
-    if (managed) |*shared| shared.transfers = config.backend_count > 1;
+    if (managed) |*shared| {
+        shared.transfers = config.backend_count > 1;
+        shared.external_transfers = config.external_transfers;
+    }
 
     self.* = .{
         .gpa = gpa,
@@ -124,6 +127,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         shared.budget = self.budget;
         shared.logins = &self.logins;
         shared.player_bytes_per_second = config.player_bytes_per_second;
+        shared.backends = self.config.backends();
     }
     if (options.plugins) |plugins| {
         plugins.attachWorker(options.worker, self.scheduler.wakeNotify());

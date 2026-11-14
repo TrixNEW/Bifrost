@@ -504,6 +504,10 @@ fn pumpBackend(self: *Link) void {
         return self.fail(err);
     }
     if (self.transfer) |transfer| if (self.session) |*session| transfer.syncClient(self.transferHost(session)) catch |err| return self.fail(err);
+    if (self.managed) |managed| if (managed.redirect) |target| {
+        managed.redirect = null;
+        self.requestTransfer(target) catch |err| transfer_log.debug("{f}'s backend asked to move them to {s}, which can't happen now: {t}", .{ self.who(), self.env.router.get(target).name(), err });
+    };
     if (paused and self.stalled()) return self.pause();
     self.backlogged_since_ms = null;
     if (!drained) self.env.scheduler.schedule(self);

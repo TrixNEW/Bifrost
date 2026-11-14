@@ -86,6 +86,35 @@ test "the old backend's last dimension change isn't taken for the handoff's" {
     try expectLanded(rig.player, nether, far);
 }
 
+fn backendTransfer(buffer: []u8, host: []const u8, port: u16) ![]const u8 {
+    return managed.typedPacket(buffer, .{ .transfer = .{ .server_address = host, .server_port = port, .reload_world = false, .gatherings_configuration = null } });
+}
+
+test "a backend's Transfer to another listed backend becomes a proxy transfer" {
+    var rig: Rig = undefined;
+    try rig.start(.{});
+    defer rig.deinit();
+    var buffer: [128]u8 = undefined;
+    try rig.player.relay(&.{try backendTransfer(&buffer, "127.0.0.1", rig.b.address().getPort())});
+    try rig.waitFor(.transfers_committed, 1);
+    try rig.expectOn(&rig.b);
+    try std.testing.expectEqual(@as(u64, 1), rig.stats().backend_redirects);
+    try std.testing.expectEqual(@as(usize, 0), rig.player.received(.transfer));
+}
+
+test "a backend's Transfer anywhere else is dropped" {
+    var rig: Rig = undefined;
+    try rig.start(.{});
+    defer rig.deinit();
+    var buffer: [128]u8 = undefined;
+    try rig.player.relay(&.{try backendTransfer(&buffer, "203.0.113.9", 19132)});
+    try rig.waitFor(.redirects_blocked, 1);
+    try pumpFor(rig.player, 100);
+    try std.testing.expectEqual(@as(usize, 0), rig.player.received(.transfer));
+    try std.testing.expectEqual(@as(u64, 0), rig.stats().transfers_started);
+    try rig.expectOn(&rig.a);
+}
+
 test "moving between dimensions needs no detour either way" {
     var rig: Rig = undefined;
     try rig.start(.{ .b_content = .{ .dimension = nether, .position = far } });

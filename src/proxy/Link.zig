@@ -76,6 +76,8 @@ backend: ?Peer = null,
 backend_error: ?anyerror = null,
 dial: Dial = .{},
 backend_id: Backend.Id = .of(0),
+// The backend holding a place for this player in its player count
+occupied: ?Backend.Id = null,
 dial_task: ?std.Io.Future(void) = null,
 tried: Router.Set = .{},
 pending: PacketQueue,
@@ -135,6 +137,7 @@ pub fn destroy(self: *Link) void {
     self.env.events.disconnected(&self.player);
     self.cancelDial();
     self.dropBackend();
+    self.vacate();
     if (self.session) |*session| session.destroy();
     if (self.managed) |managed| managed.destroy();
     self.pending.deinit(self.env.gpa);
@@ -203,9 +206,10 @@ pub fn connect(self: *Link) (error{NoBackendAvailable} || std.Io.ConcurrentError
     defer self.publishState();
     std.debug.assert(self.dial_task == null and self.backend == null);
     const span = trace.zone(@src(), "routing");
-    const picked = self.env.router.pick(self.tried, self.tried.count() >= max_dial_attempts);
+    const picked = self.env.router.claim(self.tried, self.tried.count() >= max_dial_attempts);
     span.end();
     const id = picked orelse return error.NoBackendAvailable;
+    self.occupied = id;
     self.tried.add(id);
     self.backend_id = id;
     self.env.events.backendSelected(self.player, id.index());
@@ -670,6 +674,7 @@ fn adopt(self: *Link, result: Dial.Result) void {
         else
             backend_log.debug("Can't reach {f} for {f}: {s} ({t}, {f})", .{ backend.*, self.who(), NetherNet.describe(err), err, took });
         if (self.env.health) |health| health.dialFailed(self.env.io, self.backend_id);
+        self.vacate();
         if (self.session == null) return;
         self.connect() catch |retry_err| {
             self.ending("no backend available", retry_err);
@@ -712,8 +717,9 @@ fn startTransfer(self: *Link, requested: Backend.Id) !void {
     };
     if (target.index() >= self.env.router.backends.len) return error.UnknownBackend;
     if (target == self.backend_id) return error.AlreadyThere;
-    if (self.env.health) |health| if (health.status(target) == .unhealthy) return error.BackendDown;
     if (self.env.transfers) |count| if (count.* >= self.env.max_transfers) return error.TooManyTransfers;
+    try self.env.router.claimTarget(target);
+    errdefer self.env.router.release(target);
     const epoch = self.env.next_epoch.?;
     epoch.* +%= 1;
     self.transfer = try Transfer.create(self.transferHost(session), target, self.env.router.get(target).address, epoch.*, self.env.transfer);
@@ -745,9 +751,11 @@ fn endTransfer(self: *Link, event: ?Transfer.State.Event) void {
     if (event) |cause| transfer.end(self.env.io, self.env.stats, cause);
     if (transfer.outcome == .committed) if (self.env.timings) |timings| timings.transfer.record(Metrics.sinceUs(self.env.io, self.transfer_started_ns));
     if (transfer.state.phase.committed()) {
+        self.vacate();
+        self.occupied = transfer.target;
         self.backend_id = transfer.target;
         self.network_rates = .{};
-    }
+    } else self.env.router.release(transfer.target);
     self.logTransfer(transfer, source, event);
     self.publishState();
     self.env.events.transferEnded(self.player, source.index(), transfer.target.index(), failure(transfer));
@@ -850,4 +858,11 @@ fn dropBackend(self: *Link) void {
     self.backend = null;
     backend.destroy();
     self.pending.clear(self.env.gpa);
+    self.vacate();
+}
+
+fn vacate(self: *Link) void {
+    const id = self.occupied orelse return;
+    self.occupied = null;
+    self.env.router.release(id);
 }

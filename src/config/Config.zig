@@ -55,6 +55,11 @@ motd_storage: [max_motd_len]u8 = undefined,
 motd_len: usize = 0,
 backend_storage: [max_backends]Backend = undefined,
 backend_count: usize = 0,
+join_storage: [max_backends]Backend.Id = undefined,
+join_count: usize = 0,
+fallback_storage: [max_backends]Backend.Id = undefined,
+fallback_count: usize = 0,
+balance: Balance = .round_robin,
 plugins_dir_storage: [max_path_len]u8 = undefined,
 plugins_dir_len: usize = 0,
 disabled_storage: [max_disabled_plugins][max_plugin_dir_name]u8 = undefined,
@@ -93,6 +98,13 @@ pub const Auth = enum {
 pub const SessionMode = enum {
     passthrough,
     managed,
+};
+
+pub const Balance = enum {
+    round_robin,
+    least_players,
+    // Fills each backend in turn, for max_players pools
+    first,
 };
 
 pub fn logSettings(self: *const Config) log.Settings {
@@ -224,6 +236,48 @@ pub fn findBackend(self: *const Config, name: []const u8) ?Backend.Id {
         if (std.mem.eql(u8, backend.name(), name)) return .of(i);
     }
     return null;
+}
+
+const first_backend = [_]Backend.Id{.of(0)};
+
+/// Where new players go. The first backend unless [routing] join says otherwise.
+pub fn joinBackends(self: *const Config) []const Backend.Id {
+    if (self.join_count == 0) return if (self.backend_count == 0) &.{} else &first_backend;
+    return self.join_storage[0..self.join_count];
+}
+
+/// Tried in order once every join backend is down, draining or full.
+pub fn fallbackBackends(self: *const Config) []const Backend.Id {
+    return self.fallback_storage[0..self.fallback_count];
+}
+
+pub const RouteError = error{ UnknownBackend, DuplicateRoute };
+
+pub fn addJoin(self: *Config, name: []const u8) RouteError!void {
+    const id = try self.routable(name);
+    self.join_storage[self.join_count] = id;
+    self.join_count += 1;
+}
+
+pub fn addFallback(self: *Config, name: []const u8) RouteError!void {
+    const id = try self.routable(name);
+    self.fallback_storage[self.fallback_count] = id;
+    self.fallback_count += 1;
+}
+
+fn routable(self: *const Config, name: []const u8) RouteError!Backend.Id {
+    const id = self.findBackend(name) orelse return error.UnknownBackend;
+    const listed = std.mem.indexOfScalar(Backend.Id, self.join_storage[0..self.join_count], id) != null or
+        std.mem.indexOfScalar(Backend.Id, self.fallback_storage[0..self.fallback_count], id) != null;
+    if (listed) return error.DuplicateRoute;
+    return id;
+}
+
+/// Sends new players to every backend in turn, as tests with several interchangeable backends want.
+pub fn joinAll(self: *Config) void {
+    for (0..self.backend_count) |i| self.join_storage[i] = .of(i);
+    self.join_count = self.backend_count;
+    self.fallback_count = 0;
 }
 
 pub const AddBackendError = Backend.InitError || error{ TooManyBackends, DuplicateBackend, DuplicateName };

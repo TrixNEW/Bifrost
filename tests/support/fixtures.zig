@@ -25,6 +25,7 @@ pub const dead_timeout_ms: u32 = 500;
 pub fn config(backends: []const IpAddress) !bifrost.Config {
     var result: bifrost.Config = .{ .bind = loopback, .max_players = 8, .connect_timeout_ms = connect_timeout_ms };
     for (backends) |backend| try result.addBackend(null, backend);
+    result.joinAll();
     return result;
 }
 

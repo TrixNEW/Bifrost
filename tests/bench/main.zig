@@ -231,6 +231,7 @@ fn serveProxy(init: std.process.Init, args: []const [:0]const u8) !void {
     config.health_interval_ms = try std.fmt.parseInt(u32, args[2], 10);
     config.health_timeout_ms = @min(1_000, config.health_interval_ms / 2);
     for (args[4..]) |port| try config.addBackend(null, harness.loopback(try std.fmt.parseInt(u16, port, 10)));
+    config.joinAll();
     var keys = try sample.keySet(init.gpa, init.io);
     defer keys.deinit();
     var options: bifrost.Workers.Options = .{ .identity = bifrost.NetherNet.KeyPair.generate(init.io) };

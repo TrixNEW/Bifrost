@@ -129,7 +129,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         plugins.attachWorker(options.worker, self.scheduler.wakeNotify());
         if (self.managed) |*shared| shared.hooks = .{ .plugins = plugins, .worker = options.worker };
     }
-    self.router = .init(self.config.backends(), options.health);
+    self.router = .init(&self.config, options.health);
     self.env = .{
         .gpa = gpa,
         .io = io,
@@ -251,7 +251,7 @@ pub fn action(self: *Proxy, link_id: u64, disconnect: bool, backend: u32, reason
     if (backend >= self.router.backends.len) return .invalid_argument;
     link.requestTransfer(.of(backend)) catch |err| return switch (err) {
         error.NotManaged => .unsupported,
-        error.TransferInProgress, error.TooManyTransfers => .busy,
+        error.TransferInProgress, error.TooManyTransfers, error.BackendFull, error.BackendDraining => .busy,
         error.NotInGame, error.AlreadyThere => .too_late,
         error.CanceledByPlugin => .canceled,
         else => .failed,

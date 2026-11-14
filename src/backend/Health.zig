@@ -13,6 +13,9 @@ const Entry = struct {
     // Only probes say a backend is down or back, so a dial failure between passing probes doesn't flap
     probe_failed: std.atomic.Value(bool) = .init(false),
     dial_warned_ms: std.atomic.Value(u64) = .init(0),
+    // This proxy's players there, counting transfers on their way in
+    proxied: std.atomic.Value(u32) = .init(0),
+    draining: std.atomic.Value(bool) = .init(false),
 };
 
 const dial_warning_interval_ms = 60_000;
@@ -24,11 +27,44 @@ entries: [Config.max_backends]Entry = @splat(.{}),
 recheck: std.Io.Event = .unset,
 
 pub fn init(backends: []const Backend, interval_ms: u32, timeout_ms: u32) Health {
-    return .{ .backends = backends, .interval_ms = interval_ms, .timeout_ms = timeout_ms };
+    var self: Health = .{ .backends = backends, .interval_ms = interval_ms, .timeout_ms = timeout_ms };
+    for (backends, self.entries[0..backends.len]) |backend, *entry| entry.draining.raw = backend.draining;
+    return self;
 }
 
 pub fn status(self: *const Health, id: Backend.Id) Status {
     return self.entries[id.index()].status.load(.acquire);
+}
+
+/// Holds a place for one more player unless the backend is at its max_players.
+pub fn claim(self: *Health, id: Backend.Id) bool {
+    const entry = &self.entries[id.index()];
+    const limit = self.backends[id.index()].max_players;
+    if (limit == 0) {
+        _ = entry.proxied.fetchAdd(1, .monotonic);
+        return true;
+    }
+    var current = entry.proxied.load(.monotonic);
+    while (current < limit) current = entry.proxied.cmpxchgWeak(current, current + 1, .monotonic, .monotonic) orelse return true;
+    return false;
+}
+
+pub fn release(self: *Health, id: Backend.Id) void {
+    const previous = self.entries[id.index()].proxied.fetchSub(1, .monotonic);
+    std.debug.assert(previous != 0);
+}
+
+pub fn proxied(self: *const Health, id: Backend.Id) u32 {
+    return self.entries[id.index()].proxied.load(.monotonic);
+}
+
+pub fn isDraining(self: *const Health, id: Backend.Id) bool {
+    return self.entries[id.index()].draining.load(.acquire);
+}
+
+/// Draining keeps the players already there but sends no new ones or transfers.
+pub fn setDraining(self: *Health, id: Backend.Id, draining: bool) bool {
+    return self.entries[id.index()].draining.swap(draining, .acq_rel) != draining;
 }
 
 pub fn markFailed(self: *Health, id: Backend.Id) void {

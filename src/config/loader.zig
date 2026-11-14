@@ -128,9 +128,37 @@ fn readRoot(config: *Config, root: *const toml.Table, diag: *Diagnostic) Error!v
             try readPlugins(config, try table(diag, key, value), diag);
         } else if (eql(name, "logging")) {
             try readLogging(config, try table(diag, key, value), diag);
+        } else if (eql(name, "routing")) {
+            // Names backends, so it's read once they're all known
+            _ = try table(diag, key, value);
         } else if (eql(name, "plugin")) {
             return fail(diag, key, "[[plugin]] path is gone; put native libraries with embedded manifests directly in plugins/", .{});
         } else return fail(diag, key, "unknown section", .{});
+    }
+    if (root.get("routing")) |value| try readRouting(config, value.table, diag);
+}
+
+fn readRouting(config: *Config, section: *const toml.Table, diag: *Diagnostic) Error!void {
+    var it = section.iterator();
+    while (it.next()) |entry| {
+        const key: Key = .{ .section = "routing", .name = entry.key_ptr.* };
+        const value = entry.value_ptr.*;
+        if (eql(key.name.?, "join") or eql(key.name.?, "fallback")) {
+            if (value != .array) return fail(diag, key, "expected a list of backend names", .{});
+            if (eql(key.name.?, "join") and value.array.items.len == 0) return fail(diag, key, "needs at least one backend", .{});
+            for (value.array.items) |item| {
+                const name = try string(diag, key, item);
+                const added = if (eql(key.name.?, "join")) config.addJoin(name) else config.addFallback(name);
+                added catch |err| return switch (err) {
+                    error.UnknownBackend => fail(diag, key, "no [[backend]] is named \"{s}\"", .{name}),
+                    error.DuplicateRoute => fail(diag, key, "\"{s}\" is listed more than once in join and fallback", .{name}),
+                };
+            }
+        } else if (eql(key.name.?, "balance")) {
+            const text = try string(diag, key, value);
+            config.balance = std.meta.stringToEnum(Config.Balance, text) orelse
+                return fail(diag, key, "expected \"round_robin\", \"least_players\" or \"first\", got \"{s}\"", .{text});
+        } else return fail(diag, key, "unknown key", .{});
     }
 }
 
@@ -348,13 +376,21 @@ fn readSession(config: *Config, section: *const toml.Table, diag: *Diagnostic) E
 fn readBackend(config: *Config, section: *const toml.Table, index: usize, diag: *Diagnostic) Error!void {
     var backend: ?IpAddress = null;
     var name: ?[]const u8 = null;
+    var max_players: u32 = 0;
+    var draining = false;
     var it = section.iterator();
     while (it.next()) |entry| {
         const key: Key = .{ .section = "backend", .index = index, .name = entry.key_ptr.* };
+        const value = entry.value_ptr.*;
         if (eql(key.name.?, "address")) {
-            backend = try address(diag, key, entry.value_ptr.*, false);
+            backend = try address(diag, key, value, false);
         } else if (eql(key.name.?, "name")) {
-            name = try string(diag, key, entry.value_ptr.*);
+            name = try string(diag, key, value);
+        } else if (eql(key.name.?, "max_players")) {
+            max_players = try integer(u32, diag, key, value, 0, 100_000);
+        } else if (eql(key.name.?, "draining")) {
+            if (value != .boolean) return fail(diag, key, "expected true or false", .{});
+            draining = value.boolean;
         } else return fail(diag, key, "unknown key", .{});
     }
     const key: Key = .{ .section = "backend", .index = index, .name = "address" };
@@ -366,6 +402,9 @@ fn readBackend(config: *Config, section: *const toml.Table, index: usize, diag: 
         error.InvalidName => fail(diag, name_key, "must be 1 to {d} of a-z A-Z 0-9 - _ . : [ ]", .{Backend.max_name_len}),
         error.DuplicateName => fail(diag, name_key, "duplicates an earlier backend", .{}),
     };
+    const added = &config.backend_storage[config.backend_count - 1];
+    added.max_players = max_players;
+    added.draining = draining;
 }
 
 fn table(diag: *Diagnostic, key: Key, value: toml.Value) Error!*const toml.Table {

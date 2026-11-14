@@ -238,6 +238,18 @@ pub fn writeMetrics(self: *const Workers, w: *std.Io.Writer) std.Io.Writer.Error
         try Metrics.label(w, backend.name());
         try w.print("\"}} {d}\n", .{@intFromBool(self.health.status(.of(i)) == .healthy)});
     }
+    try Metrics.header(w, "backend_players", "gauge", "Players this proxy has on each backend, transfers in progress included.");
+    for (self.health.backends, 0..) |*backend, i| {
+        try w.writeAll("bifrost_backend_players{backend=\"");
+        try Metrics.label(w, backend.name());
+        try w.print("\"}} {d}\n", .{self.health.proxied(.of(i))});
+    }
+    try Metrics.header(w, "backend_draining", "gauge", "1 while a backend takes no new players or transfers.");
+    for (self.health.backends, 0..) |*backend, i| {
+        try w.writeAll("bifrost_backend_draining{backend=\"");
+        try Metrics.label(w, backend.name());
+        try w.print("\"}} {d}\n", .{@intFromBool(self.health.isDraining(.of(i)))});
+    }
     try Metrics.value(w, "transfers_started_total", "counter", "Transfers started.", totals_now.transfers_started);
     try Metrics.value(w, "transfers_committed_total", "counter", "Transfers that finished.", totals_now.transfers_committed);
     try Metrics.value(w, "transfers_failed_total", "counter", "Transfers that failed or timed out.", totals_now.transfers_failed_before_commit + totals_now.transfers_failed_after_commit + totals_now.transfers_timed_out);

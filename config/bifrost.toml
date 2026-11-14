@@ -74,6 +74,14 @@ timeout_ms = 15000
 max_concurrent = 64
 # "initial" keeps the first backend's packs for the whole session; "match" also needs every target to offer the same
 content = "initial"
+[routing]
+# Backends new players join. Unset, only the first [[backend]] takes them
+join = ["lobby"]
+# Tried in order once every join backend is down, draining or full
+fallback = []
+# "round_robin", "least_players" (fewest of this proxy's players) or "first" (fill each in turn)
+balance = "round_robin"
+
 
 [logging]
 # error, warn, info, debug or trace. debug shows connection stages and routing, trace adds NetherNet signaling
@@ -92,6 +100,10 @@ file_max_mb = 16
 # Defaults to the address. Backends speak NetherNet too, this is their HTTP signaling address
 name = "lobby"
 address = "127.0.0.1:19133"
+# Players this proxy sends there at once, 0 for no limit
+max_players = 0
+# Takes no new players or transfers until "undrain lobby" on the console
+draining = false
 
 [[backend]]
 name = "survival"

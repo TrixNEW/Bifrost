@@ -21,6 +21,10 @@ pub const Id = enum(u8) {
 address: IpAddress,
 name_len: u8,
 name_storage: [max_name_len]u8,
+// Players this proxy sends there at once, 0 for no limit
+max_players: u32 = 0,
+// Starts out taking no new players or transfers
+draining: bool = false,
 
 pub const InitError = error{ InvalidPort, InvalidName };
 

@@ -172,16 +172,16 @@ fn category(comptime scope: @EnumLiteral()) []const u8 {
 // Names and reasons can come from players, so control bytes can't break a line or reach the terminal
 fn render(buffer: []u8, comptime format: []const u8, args: anytype) []u8 {
     var w: Io.Writer = .fixed(buffer);
-    var text = buffer[0..w.end];
-    if (w.print(format, args)) |_| {
-        text = w.buffered();
-    } else |_| {
+    const text = if (w.print(format, args)) |_| w.buffered() else |_| blk: {
         const end = @min(w.end + 3, buffer.len);
         @memcpy(buffer[end - 3 .. end], "...");
-        text = buffer[0..end];
-    }
-    for (text) |*byte| {
-        if (byte.* < 0x20 or byte.* == 0x7f) byte.* = ' ';
+        break :blk buffer[0..end];
+    };
+    for (text, 0..) |*byte, i| {
+        // C1 controls arrive UTF-8 encoded as C2 80..9F, and some terminals act on them too
+        const c1 = byte.* == 0xc2 and i + 1 < text.len and text[i + 1] >= 0x80 and text[i + 1] <= 0x9f;
+        if (byte.* < 0x20 or byte.* == 0x7f or c1) byte.* = ' ';
+        if (c1) text[i + 1] = ' ';
     }
     return text;
 }
@@ -222,7 +222,7 @@ fn writeFile(io: Io, terminal: Io.Terminal, level: Level, name: []const u8, text
     var w: Io.Writer = .fixed(&buffer);
     w.print("{d}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}  {s}  {s} {s}\n", .{
         time.year, time.month, time.day, time.hour, time.minute, time.second, level.label(), name, text,
-    }) catch unreachable;
+    }) catch return;
     const line = w.buffered();
     if (state.file_size != 0 and state.file_size + line.len > state.file_max_bytes) {
         closeFile(io);
@@ -237,7 +237,9 @@ fn writeFile(io: Io, terminal: Io.Terminal, level: Level, name: []const u8, text
 fn openFresh(io: Io, path: []const u8) !Io.File {
     var buffer: [max_path_len + 2]u8 = undefined;
     const previous = std.fmt.bufPrint(&buffer, "{s}.1", .{path}) catch unreachable;
-    Io.Dir.cwd().rename(path, .cwd(), previous, io) catch {};
+    // Never move a directory or anything else that isn't an old log
+    const kind = if (Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false })) |stat| stat.kind else |_| null;
+    if (kind == .file) Io.Dir.cwd().rename(path, .cwd(), previous, io) catch {};
     return Io.Dir.cwd().createFile(io, path, .{ .truncate = true });
 }
 
@@ -347,6 +349,7 @@ test "categories are capitalized and padded" {
 test "messages are sanitized and truncated" {
     var buffer: [16]u8 = undefined;
     try std.testing.expectEqualStrings("a b c", render(&buffer, "{s}", .{"a\nb\x1bc"}));
+    try std.testing.expectEqualStrings("x  y \xc2\xa0", render(&buffer, "{s}", .{"x\xc2\x9by \xc2\xa0"}));
     try std.testing.expectEqualStrings("0123456789abc...", render(&buffer, "{s}", .{"0123456789abcdefghij"}));
 }
 
@@ -392,4 +395,17 @@ test "the log file rotates at its limit and keeps one previous file" {
     const text = try tmp.dir.readFile(io, "logs/bifrost.log", &content);
     try std.testing.expect(std.mem.endsWith(u8, text, "  DEBUG  Server     last\n"));
     try std.testing.expect(std.mem.indexOfScalar(u8, text, 0x1b) == null);
+}
+
+test "a log path naming a directory is refused, not rotated away" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "logs/keep");
+    var path_buffer: [256]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, ".zig-cache/tmp/{s}/logs/keep", .{tmp.sub_path});
+    // Windows says AccessDenied, others IsDir
+    if (configure(.{ .file = path })) |_| return error.TestUnexpectedResult else |_| {}
+    try std.testing.expectEqual(Io.File.Kind.directory, (try tmp.dir.statFile(io, "logs/keep", .{})).kind);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "logs/keep.1", .{}));
 }

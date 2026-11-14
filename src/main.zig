@@ -22,10 +22,15 @@ pub fn main(init: std.process.Init) !void {
     log.info("Starting Bifrost {s}", .{bifrost.version});
     const config = loadConfig(init);
     const log_settings = config.logSettings();
-    bifrost.log.configure(log_settings) catch |err|
-        config_log.err("can't open log file {s}: {t}; logging to the console only", .{ log_settings.file.?, err });
+    bifrost.log.configure(log_settings) catch |err| {
+        var console_only = log_settings;
+        console_only.file = null;
+        bifrost.log.configure(console_only) catch unreachable;
+        config_log.err("Can't open log file {s}: {t}; logging to the console only", .{ log_settings.file.?, err });
+    };
     defer bifrost.log.deinit();
-    if (bifrost.log.enabled(.trace)) bifrost.enableNativeTrace();
+    // Prints straight to the console, so only a console at trace turns it on
+    if (log_settings.level == .trace) bifrost.enableNativeTrace();
 
     const keys_json: ?[]u8 = if (config.keysFile()) |keys_path| bifrost.readKeys(init.gpa, init.io, keys_path) catch |err|
         fatal("can't read auth keys {s}: {t}", .{ keys_path, err }) else null;

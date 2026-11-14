@@ -28,6 +28,8 @@ pub const Settings = struct {
 };
 
 pub const max_ice_servers = 4;
+// What players get for ICE, DTLS and SCTP after the answer. Vanilla clients allow 15 s, relayed paths can be slow
+pub const ice_timeout_ms = 10_000;
 // Backends check the token's age against its 60 s life, so reuse stays well under that
 const token_reuse_s = 20;
 
@@ -109,6 +111,7 @@ pub fn serverOptions(self: *NetherNet) nethernet.ConnectionOptions {
     return .{
         .native = self.native,
         .maximum_message_size = max_message_bytes,
+        .connection_timeout_ms = ice_timeout_ms,
         .server_identity_key = self.identity,
         .allow_anonymous = self.issuer == null,
         .verify_client = if (self.issuer != null) .{ .context = self, .verify = verify } else null,

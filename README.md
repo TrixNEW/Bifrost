@@ -39,7 +39,9 @@ zig build -Doptimize=ReleaseSafe
 
 Configure Bifrost in [`config/bifrost.toml`](config/bifrost.toml).
 
-For Pterodactyl hosting, use the [Bifrost egg](https://github.com/Bedrock-Phanatics/pterodactyl-eggs/blob/main/bifrost-pterodactyl-egg.json).
+Linux x86_64 builds are on the [releases page](https://github.com/TrixNEW/Bifrost/releases). Extract the archive and start it with `./run.sh`.
+
+For Pterodactyl hosting, use the [Bifrost egg](https://github.com/Bedrock-Phanatics/pterodactyl-eggs/blob/main/bifrost-pterodactyl-egg.json). Set `BIFROST_REF` to `main` or a release tag such as `v1.0.0`.
 
 ## Documentation
 

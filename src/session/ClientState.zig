@@ -153,6 +153,19 @@ pub fn reset(self: *ClientState, emitter: *Outbox) !void {
         .detach_from_entity = true,
     } } });
     try emitter.emit(.{ .stop_sound = .{ .sound_name = "", .stop_all_sounds = true, .stop_music_legacy = true } });
+    // Untracked, and harmless to send when nothing is showing
+    try emitter.emit(.{ .client_bound_close_form = .{} });
+    for ([_]packets.set_title.SetTitleTitleType{ .clear, .reset }) |kind| try emitter.emit(.{ .set_title = .{
+        .title_type = kind,
+        .title_text = "",
+        .fade_in_time = 0,
+        .stay_time = 0,
+        .fade_out_time = 0,
+        .xuid = "",
+        .platform_online_id = "",
+        .filtered_title_message = "",
+    } });
+    try emitter.emit(.{ .camera_shake = .{ .intensity = 0, .seconds = 0, .shake_type = .positional, .shake_action = .stop } });
     self.forget();
 }
 
@@ -228,11 +241,13 @@ fn observed(state: *ClientState, value: protocol.typed.Packet) !void {
     try state.observe(std.testing.allocator, .{ .header = .{ .packet_id = 0 }, .kind = null, .payload = &.{}, .value = .{ .typed = value } });
 }
 
+const always_reset = [_]protocol.PacketKind{ .stop_sound, .client_bound_close_form, .set_title, .set_title, .camera_shake };
+
 fn resetKinds(state: *ClientState, kinds: []protocol.PacketKind) ![]protocol.PacketKind {
     var outbox: Outbox = .init(std.testing.allocator);
     defer outbox.deinit();
     try state.reset(&outbox);
-    var packets_out: [16][]const u8 = undefined;
+    var packets_out: [24][]const u8 = undefined;
     for (outbox.slices(0, &packets_out), 0..) |packet, i| kinds[i] = (try Current.decodeBorrowed(packet, .{})).kind.?;
     return kinds[0..outbox.count()];
 }
@@ -251,11 +266,11 @@ test "everything a backend left behind is undone once" {
     try observed(&state, .{ .level_event = .{ .event_id = start_rain, .position = .{ .x = 0, .y = 0, .z = 0 }, .data = 0 } });
     try observed(&state, .{ .update_client_input_locks = .{ .input_lock_component_data = 2 } });
 
-    var kinds: [16]protocol.PacketKind = undefined;
-    try std.testing.expectEqualSlices(protocol.PacketKind, &.{
-        .container_close, .mob_effect, .boss_event, .remove_objective, .update_client_input_locks, .level_event, .stop_sound,
-    }, try resetKinds(&state, &kinds));
-    try std.testing.expectEqualSlices(protocol.PacketKind, &.{.stop_sound}, try resetKinds(&state, &kinds));
+    var kinds: [24]protocol.PacketKind = undefined;
+    try std.testing.expectEqualSlices(protocol.PacketKind, &[_]protocol.PacketKind{
+        .container_close, .mob_effect, .boss_event, .remove_objective, .update_client_input_locks, .level_event,
+    } ++ always_reset, try resetKinds(&state, &kinds));
+    try std.testing.expectEqualSlices(protocol.PacketKind, &always_reset, try resetKinds(&state, &kinds));
 }
 
 test "a closed container is not closed again" {
@@ -263,8 +278,8 @@ test "a closed container is not closed again" {
     defer state.deinit(std.testing.allocator);
     try observed(&state, .{ .container_open = .{ .container_id = 3, .container_type = 0, .position = .{ .x = 0, .y = 0, .z = 0 }, .target_actor_id = -1 } });
     state.containerClosed();
-    var kinds: [4]protocol.PacketKind = undefined;
-    try std.testing.expectEqualSlices(protocol.PacketKind, &.{.stop_sound}, try resetKinds(&state, &kinds));
+    var kinds: [8]protocol.PacketKind = undefined;
+    try std.testing.expectEqualSlices(protocol.PacketKind, &always_reset, try resetKinds(&state, &kinds));
 }
 
 test "the player's own inventory closes with its signed container type" {

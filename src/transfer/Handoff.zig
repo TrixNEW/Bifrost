@@ -47,6 +47,11 @@ pub fn acknowledged(self: *Handoff, outbox: *Outbox) !Progress {
     }
 }
 
+/// How many dimension changes the client will acknowledge before it's in the target's world.
+pub fn acks(self: *const Handoff) u8 {
+    return if (self.via == null) 1 else 2;
+}
+
 pub fn arrived(self: *const Handoff) bool {
     return self.step == .arrived;
 }
@@ -90,6 +95,28 @@ fn emptyChunk(buffer: *[2 * 24 + 1]u8, dimension: i32) []const u8 {
     for (0..sections) |i| buffer[2 * i ..][0..2].* = .{ 1, biome << 1 };
     buffer[2 * sections] = 0;
     return buffer[0 .. 2 * sections + 1];
+}
+
+/// Sent before the client saw the switch, these name the old backend's forms, entities, windows or
+/// positions, so the target must never get them.
+pub fn staleDuringSync(kind: ?protocol.PacketKind) bool {
+    return switch (kind orelse return false) {
+        .player_auth_input,
+        .move_player,
+        .modal_form_response,
+        .inventory_transaction,
+        .item_stack_request,
+        .interact,
+        .actor_pick_request,
+        .block_pick_request,
+        .container_close,
+        .npc_request,
+        .book_edit,
+        .lectern_update,
+        .server_bound_data_driven_screen_closed,
+        => true,
+        else => false,
+    };
 }
 
 pub fn isAck(packet: protocol.BorrowedEnvelope) bool {

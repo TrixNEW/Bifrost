@@ -123,6 +123,11 @@ client_dimension: i32 = Handoff.overworld,
 hold: ?*Queue = null,
 syncing: bool = false,
 dimension_acks: u32 = 0,
+// Dimension changes the client hasn't acknowledged. Those still open at a transfer's commit answer the old
+// backend, so their acks mustn't count as the handoff's.
+unacked_changes: u32 = 0,
+stale_acks: u32 = 0,
+handoff_acks: u8 = 0,
 target_spawned: bool = false,
 client_ids: self_id.Ids = .{},
 backend_ids: self_id.Ids = .{},
@@ -435,7 +440,12 @@ fn sentToPlayer(self: *Managed, kind: ?protocol.PacketKind, packet: []const u8) 
         if (client) self.client_state.untracked = true;
         return;
     };
-    if (kind == .change_dimension) self.client_dimension = (try typed(decoded, .change_dimension)).dimension_id;
+    if (kind == .change_dimension) {
+        const dimension = (try typed(decoded, .change_dimension)).dimension_id;
+        // Clients only answer a change to another dimension
+        if (dimension != self.client_dimension) self.unacked_changes +|= 1;
+        self.client_dimension = dimension;
+    }
     if (gameplay) self.gameplay.sent(self.gpa, decoded);
     if (client) self.client_state.observe(self.gpa, decoded) catch {
         self.client_state.untracked = true;
@@ -662,14 +672,10 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame:
     while (packets.next()) |packet| {
         total += 1;
         const kind = Current.packetKind(packet.id);
-        if (self.syncing) if (kind) |known| switch (known) {
-            .player_action => if (Handoff.isAck(try decode(packet.bytes))) {
-                self.dimension_acks += 1;
-                continue;
-            },
-            .player_auth_input, .move_player => continue,
-            else => {},
-        };
+        if (kind == .player_action and (self.syncing or self.unacked_changes != 0) and Handoff.isAck(try decode(packet.bytes))) {
+            if (self.syncing and self.takeHandoffAck()) continue;
+            self.unacked_changes -|= 1;
+        } else if (self.syncing and Handoff.staleDuringSync(kind)) continue;
         if (self.upstream.phase != .ready) {
             try self.early.push(self.gpa, packet.bytes);
             continue;
@@ -685,6 +691,29 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame:
         defer arena.deinit();
         if (self.advertise(arena.allocator(), plugins, null)) |packet| try self.sendToPlayer(ends, &.{packet});
     };
+}
+
+/// Begins a transfer's client sync once the handoff has sent its dimension changes.
+pub fn startSync(self: *Managed, handoff_acks: u8, target_dimension: i32) void {
+    self.syncing = true;
+    self.dimension_acks = 0;
+    self.stale_acks = self.unacked_changes;
+    self.unacked_changes = 0;
+    self.handoff_acks = handoff_acks;
+    self.client_dimension = target_dimension;
+}
+
+// Acks of changes from before the commit are dropped, then the handoff's own are counted, and later ones
+// answer the target
+fn takeHandoffAck(self: *Managed) bool {
+    if (self.stale_acks != 0) {
+        self.stale_acks -= 1;
+        return true;
+    }
+    if (self.handoff_acks == 0) return false;
+    self.handoff_acks -= 1;
+    self.dimension_acks += 1;
+    return true;
 }
 
 fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame: []const u8) !void {

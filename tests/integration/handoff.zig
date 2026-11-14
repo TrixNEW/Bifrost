@@ -61,6 +61,31 @@ test "a same-dimension move detours once and lands on the target spawn" {
     }
 }
 
+test "the old backend's last dimension change isn't taken for the handoff's" {
+    var rig: Rig = undefined;
+    try rig.start(.{ .b_content = .{ .dimension = nether, .position = far } });
+    defer rig.deinit();
+    rig.player.hold_acks = true;
+    var buffer: [128]u8 = undefined;
+    try rig.player.relay(&.{try managed.typedPacket(&buffer, .{ .change_dimension = .{ .dimension_id = nether, .position = spawn, .respawn = false, .loading_screen_id = null } })});
+
+    try rig.transfer(1);
+    // The old backend's change, then the detour to the overworld
+    try waitForChanges(&rig, 2);
+    rig.player.held_acks = 1;
+    try rig.player.releaseAcks();
+    rig.player.hold_acks = true;
+    try pumpFor(rig.player, 300);
+    try std.testing.expectEqual(@as(usize, 2), rig.player.changes.items.len);
+    try std.testing.expectEqual(@as(u64, 0), rig.stats().transfers_committed);
+
+    rig.player.held_acks = 1;
+    try rig.player.releaseAcks();
+    try rig.waitFor(.transfers_committed, 1);
+    try std.testing.expectEqual(@as(usize, 3), rig.player.changes.items.len);
+    try expectLanded(rig.player, nether, far);
+}
+
 test "moving between dimensions needs no detour either way" {
     var rig: Rig = undefined;
     try rig.start(.{ .b_content = .{ .dimension = nether, .position = far } });

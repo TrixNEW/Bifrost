@@ -349,8 +349,7 @@ fn commit(self: *Transfer, host: Host) !void {
     const spawn = self.target_spawn.?;
     managed.gameplay.transferred(now(host.io) / std.time.ns_per_ms, spawn.dimension, spawn.position, self.target_modes.player, self.target_modes.world);
     self.handoff = try .begin(managed.client_dimension, spawn, &outbox);
-    managed.syncing = true;
-    managed.dimension_acks = 0;
+    managed.startSync(self.handoff.?.acks(), spawn.dimension);
     managed.target_spawned = self.seen.spawned;
     managed.backend_ids = self.target_ids;
     try managed.sendOutbox(host.ends(), &outbox);
@@ -383,7 +382,6 @@ pub fn syncClient(self: *Transfer, host: Host) !void {
     // The client's ack and the target's spawn can land in either order
     if (!self.handoff.?.arrived() or !managed.target_spawned) return;
     managed.syncing = false;
-    managed.client_dimension = self.handoff.?.target.dimension;
     managed.gameplay.synced();
     try managed.spawnTarget(host.ends());
     self.on(host, .client_synced);

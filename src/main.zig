@@ -7,6 +7,8 @@ const config_log = bifrost.log.scoped(.config);
 const net_log = bifrost.log.scoped(.network);
 
 pub const std_options_debug_io = zio.debug_io;
+// Plugin calls keep their context per thread, so a task must never move to another executor mid-call
+pub const zio_options: zio.Options = .{ .scheduling = .pinned };
 pub const std_options: std.Options = .{
     .logFn = bifrost.log.logFn,
     // Everything reaches logFn, which filters by the [logging] levels at runtime

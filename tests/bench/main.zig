@@ -28,6 +28,8 @@ const nowNs = harness.nowNs;
 const sleepMs = harness.sleepMs;
 
 pub const std_options_debug_io = zio.debug_io;
+// Plugin calls keep their context per thread, so a task must never move to another executor mid-call
+pub const zio_options: zio.Options = .{ .scheduling = .pinned };
 // Expected failures (dead backends) would otherwise log inside timed sections
 pub const std_options: std.Options = .{ .log_level = .err };
 

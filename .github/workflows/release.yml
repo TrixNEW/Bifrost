@@ -5,6 +5,8 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-*"
+  # Builds and checks the archive without publishing it
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,10 +17,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    # The oldest supported runner, so the archive needs glibc 2.35 at most
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
-    env:
-      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
@@ -27,58 +28,57 @@ jobs:
       - name: Tag matches build.zig.zon
         run: |
           version=$(sed -n 's/^ *\.version = "\(.*\)",/\1/p' build.zig.zon)
-          if [ "v$version" != "$TAG" ]; then
-            echo "::error::Tag $TAG does not match build.zig.zon version $version"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match build.zig.zon version $version"
             exit 1
           fi
+          echo "TAG=v$version" >> "$GITHUB_ENV"
       - run: zig fmt --check build.zig build.zig.zon src tests examples
-      - run: sh tools/setup-native.sh
+      # libstdc++ goes into libdatachannel, so the archive doesn't depend on the host's
+      - run: LDFLAGS="-static-libstdc++ -static-libgcc" sh tools/setup-native.sh
       - run: zig build test bench-test
       - run: zig build test bench-test -Doptimize=ReleaseSafe
       - run: zig build -Doptimize=ReleaseSafe
       - name: Package
+        run: sh tools/package-release.sh "$TAG"
+      - name: Smoke-test the archive in clean containers
         run: |
-          name=bifrost-$TAG-linux-x86_64
-          mkdir -p "dist/$name"/{bin,lib,config}
-          install -m 755 zig-out/bin/bifrost "dist/$name/bin/bifrost"
-          cp -P .deps/native/lib/*.so* "dist/$name/lib/"
-          cp config/bifrost.toml "dist/$name/config/"
-          cp LICENSE NOTICE README.md "dist/$name/"
-          printf '#!/bin/sh\ncd "$(dirname "$0")"\nLD_LIBRARY_PATH=$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} exec ./bin/bifrost "$@"\n' > "dist/$name/run.sh"
-          chmod 755 "dist/$name/run.sh"
-          tar -C dist -czf "$name.tar.gz" "$name"
-          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-      - name: Smoke-test the archive
-        run: |
-          dir=$(mktemp -d)
-          tar -xzf "bifrost-$TAG-linux-x86_64.tar.gz" -C "$dir"
-          cd "$dir"/bifrost-*
-          if LD_LIBRARY_PATH=$PWD/lib ldd bin/bifrost | grep 'not found'; then
-            echo "::error::Archive is missing a shared library"
+          if ldd .deps/native/lib/libdatachannel.so | grep -q libstdc++; then
+            echo "::error::libdatachannel still links libstdc++ dynamically"
             exit 1
           fi
-          ./run.sh > run.log 2>&1 &
-          pid=$!
-          for _ in $(seq 60); do
-            grep -q "Bifrost ready" run.log && break
-            kill -0 $pid 2>/dev/null || break
-            sleep 0.5
+          for image in debian:bookworm-slim ubuntu:22.04; do
+            echo "::group::$image"
+            docker run --rm -v "$PWD/dist/bifrost-$TAG-linux-x86_64.tar.gz:/bifrost.tar.gz:ro" -e VERSION="${TAG#v}" "$image" sh -ec '
+              tar -xzf /bifrost.tar.gz -C /opt
+              cd /opt/bifrost-*
+              ./run.sh > run.log 2>&1 &
+              pid=$!
+              for _ in $(seq 60); do
+                grep -q "Bifrost ready" run.log && break
+                kill -0 $pid 2>/dev/null || break
+                sleep 0.5
+              done
+              kill -TERM $pid 2>/dev/null || true
+              wait $pid || true
+              cat run.log
+              grep -qF "Starting Bifrost $VERSION" run.log
+              grep -q "Bifrost ready" run.log
+              grep -q "Stopped after" run.log
+              test -f licenses/libdatachannel/LICENSE && test -f licenses/mbedtls/LICENSE && test -f licenses/zio/LICENSE'
+            echo "::endgroup::"
           done
-          kill -INT $pid 2>/dev/null || true
-          wait $pid || true
-          cat run.log
-          grep -qF "Starting Bifrost ${TAG#v}" run.log
-          grep -q "Bifrost ready" run.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release
           path: |
-            bifrost-*.tar.gz
-            bifrost-*.tar.gz.sha256
+            dist/bifrost-*.tar.gz
+            dist/bifrost-*.tar.gz.sha256
           if-no-files-found: error
 
   publish:
     needs: build
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

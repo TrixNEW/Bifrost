@@ -454,7 +454,12 @@ fn pumpPlayer(self: *Link) void {
             self.ending(switch (err) {
                 error.LoginRejected => "login rejected",
                 error.BackendClosed => "backend connection lost",
-                else => "bad or unexpected packet",
+                error.ServerBusy => "too many logins at once, told to retry",
+                else => switch (self.authentication) {
+                    .rejected => "login rejected",
+                    .unavailable => "login couldn't be verified",
+                    else => "bad or unexpected packet",
+                },
             }, err);
             _ = self.disconnect("");
             return;
@@ -631,18 +636,24 @@ fn observe(self: *Link, observer: *Observer, direction: bedwire.TapDirection, pa
             stats.bump(.logins_verified, 1);
         },
         .login_rejected => {
+            self.ending("login rejected", null);
             self.authentication = .rejected;
             stats.bump(.logins_rejected, 1);
         },
         .auth_unavailable => {
+            self.ending("login couldn't be verified", null);
             self.authentication = .unavailable;
             stats.bump(.auth_unavailable, 1);
         },
         .login_throttled => {
+            self.ending("too many logins at once, told to retry", null);
             self.authentication = .unavailable;
             stats.bump(.logins_throttled, 1);
         },
-        .flooded => stats.bump(.player_floods, 1),
+        .flooded => {
+            self.ending("sent too much data", null);
+            stats.bump(.player_floods, 1);
+        },
     }
     return event;
 }
@@ -653,12 +664,11 @@ fn adopt(self: *Link, result: Dial.Result) void {
     const connection = result catch |err| {
         self.env.stats.bump(.backend_failures, 1);
         if (err == error.Canceled) return self.closeSession();
-        // Health already said it's down, so only the first failure after that is worth a warning
-        const known_down = if (self.env.health) |health| health.status(self.backend_id) == .unhealthy else false;
-        if (known_down)
-            backend_log.debug("Can't reach {f} for {f}: {s} ({t}, {f})", .{ backend.*, self.who(), NetherNet.describe(err), err, took })
+        const warn = if (self.env.health) |health| health.warnDial(self.backend_id, nowMs(self.env.io)) else true;
+        if (warn)
+            backend_log.warn("Can't reach {f}: {s} ({t}, {f})", .{ backend.*, NetherNet.describe(err), err, took })
         else
-            backend_log.warn("Can't reach {f}: {s} ({t}, {f})", .{ backend.*, NetherNet.describe(err), err, took });
+            backend_log.debug("Can't reach {f} for {f}: {s} ({t}, {f})", .{ backend.*, self.who(), NetherNet.describe(err), err, took });
         if (self.env.health) |health| health.dialFailed(self.env.io, self.backend_id);
         if (self.session == null) return;
         self.connect() catch |retry_err| {

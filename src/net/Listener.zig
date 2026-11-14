@@ -1,7 +1,6 @@
 const std = @import("std");
 const nethernet = @import("nethernet");
 const NetherNet = @import("NetherNet.zig");
-const log = @import("../log.zig").scoped(.nethernet);
 
 /// Answers HTTP signaling and hands every established connection to `sink`.
 const Listener = @This();
@@ -60,10 +59,8 @@ pub fn localAddress(self: *const Listener) std.Io.net.IpAddress {
 
 fn run(self: *Listener) void {
     while (true) {
-        const connection = self.endpoint.accept() catch |err| {
-            if (@as(anyerror, err) != error.Canceled and @as(anyerror, err) != error.Closed) log.err("Stopped accepting players: {t}", .{err});
-            return;
-        };
+        // Only shutdown ends this: the queue closing or the task being canceled
+        const connection = self.endpoint.accept() catch return;
         self.sink.accept(self.sink.context, connection);
     }
 }

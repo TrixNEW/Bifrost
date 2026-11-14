@@ -10,7 +10,12 @@ pub const Status = enum(u8) { unknown, healthy, unhealthy };
 const Entry = struct {
     status: std.atomic.Value(Status) = .init(.unknown),
     players: std.atomic.Value(u32) = .init(0),
+    // Only probes say a backend is down or back, so a dial failure between passing probes doesn't flap
+    probe_failed: std.atomic.Value(bool) = .init(false),
+    dial_warned_ms: std.atomic.Value(u64) = .init(0),
 };
+
+const dial_warning_interval_ms = 60_000;
 
 backends: []const Backend,
 interval_ms: u32,
@@ -36,6 +41,14 @@ pub fn dialFailed(self: *Health, io: std.Io, id: Backend.Id) void {
     self.markFailed(id);
     for (self.entries[0..self.backends.len]) |*entry| if (entry.status.load(.acquire) != .unhealthy) return;
     self.recheck.set(io);
+}
+
+/// Whether a failed dial should be a warning: once a minute per backend, the rest are debug.
+pub fn warnDial(self: *Health, id: Backend.Id, now_ms: u64) bool {
+    const last = &self.entries[id.index()].dial_warned_ms;
+    const previous = last.load(.monotonic);
+    if (previous != 0 and now_ms -| previous < dial_warning_interval_ms) return false;
+    return last.cmpxchgStrong(previous, @max(now_ms, 1), .monotonic, .monotonic) == null;
 }
 
 pub fn healthyCount(self: *const Health) usize {
@@ -73,21 +86,24 @@ pub fn checkAll(self: *Health, io: std.Io) error{Canceled}!void {
 
 fn check(self: *Health, io: std.Io, index: usize) void {
     const backend = &self.backends[index];
+    const entry = &self.entries[index];
     const players_now = probe(io, backend.address, self.timeout_ms) catch |err| {
         if (err == error.Canceled) return;
-        if (self.entries[index].status.swap(.unhealthy, .acq_rel) != .unhealthy)
+        entry.status.store(.unhealthy, .release);
+        if (!entry.probe_failed.swap(true, .monotonic))
             log.warn("{f} is down: {s} ({t})", .{ backend.*, probeFailure(err), err })
         else
             log.debug("{f} still down: {t}", .{ backend.*, err });
         return;
     };
-    const entry = &self.entries[index];
     entry.players.store(players_now, .monotonic);
-    switch (entry.status.swap(.healthy, .acq_rel)) {
-        .unknown => log.info("{f} is up ({d} online)", .{ backend.*, players_now }),
-        .unhealthy => log.info("{f} is back up ({d} online)", .{ backend.*, players_now }),
-        .healthy => {},
-    }
+    const was = entry.status.swap(.healthy, .acq_rel);
+    if (entry.probe_failed.swap(false, .monotonic))
+        log.info("{f} is back up ({d} online)", .{ backend.*, players_now })
+    else if (was == .unknown)
+        log.info("{f} is up ({d} online)", .{ backend.*, players_now })
+    else if (was == .unhealthy)
+        log.debug("{f} answers status queries again after a failed dial", .{backend.*});
 }
 
 fn probeFailure(err: anyerror) []const u8 {
@@ -182,4 +198,15 @@ test "a failed dial asks for a probe right away only when no backend is left" {
     try std.testing.expect(!health.recheck.isSet());
     health.dialFailed(std.testing.io, .of(1));
     try std.testing.expect(health.recheck.isSet());
+}
+
+test "failed dials warn once a minute per backend" {
+    var backends: [2]Backend = undefined;
+    for (&backends, 1..) |*backend, port| backend.* = try .init(null, .{ .ip4 = .loopback(@intCast(port)) });
+    var health: Health = .init(&backends, 1000, 100);
+    try std.testing.expect(health.warnDial(.of(0), 0));
+    try std.testing.expect(!health.warnDial(.of(0), 59_999));
+    try std.testing.expect(health.warnDial(.of(1), 59_999));
+    try std.testing.expect(health.warnDial(.of(0), 60_001));
+    try std.testing.expect(!health.warnDial(.of(0), 60_002));
 }

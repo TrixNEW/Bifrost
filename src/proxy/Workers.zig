@@ -111,7 +111,8 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         .max_negotiations_per_ip = config.max_negotiations_per_ip,
         .advertise_addresses = advertised[0..config.advertise_count],
         .status = .{ .context = self, .get = serverStatus },
-        .trace = Log.enabled(.trace),
+        // It only reaches the console, so only a console at trace wants it
+        .trace = config.log_level == .trace,
     });
     return self;
 }

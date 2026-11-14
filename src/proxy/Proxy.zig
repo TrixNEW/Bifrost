@@ -314,8 +314,9 @@ fn routeTransfer(context: *anyopaque, link: u64, backend: u32) abi.Status {
 
 fn rejectTransfer(self: *Proxy, request: TransferRequest, err: anyerror) void {
     const target = if (request.target.index() < self.router.backends.len) self.router.get(request.target).name() else "an unknown backend";
+    // The requesting plugin already hears why, so this is only for debugging
     if (self.findLink(request.player)) |link|
-        transfer_log.info("Not moving {f} to {s}: {t}", .{ link.who(), target, err })
+        transfer_log.debug("Not moving {f} to {s}: {t}", .{ link.who(), target, err })
     else
         transfer_log.debug("Not moving player {d} to {s}: {t}", .{ request.player, target, err });
     self.stats.bump(.transfers_rejected, 1);

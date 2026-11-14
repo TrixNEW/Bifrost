@@ -644,7 +644,7 @@ fn from(context: *anyopaque) *Loaded {
 fn hostLog(context: *anyopaque, level: abi.LogLevel, message: abi.Str) callconv(.c) void {
     const loaded = from(context);
     const text = message.slice();
-    const name = if (loaded.ready.load(.acquire)) loaded.label() else "";
+    const name = if (loaded.ready.load(.acquire)) loaded.label() else "A loading plugin";
     switch (level) {
         .err => log.err("{s}: {s}", .{ name, text }),
         .warn => log.warn("{s}: {s}", .{ name, text }),

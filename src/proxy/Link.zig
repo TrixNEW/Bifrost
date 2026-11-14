@@ -22,7 +22,11 @@ const Metrics = @import("Metrics.zig");
 const trace = @import("../trace.zig");
 
 const Link = @This();
-const log = std.log.scoped(.link);
+const Log = @import("../log.zig");
+const log = Log.scoped(.player);
+const routing_log = Log.scoped(.routing);
+const backend_log = Log.scoped(.backend);
+const transfer_log = Log.scoped(.transfer);
 
 // Messages read from each side per turn, so one busy link can't starve the rest
 const max_messages_per_turn = 64;
@@ -81,6 +85,8 @@ transfer: ?*Transfer = null,
 id: u64 = 0,
 player: abi.Player = .{},
 announced: bool = false,
+// Logged in, or relayed past the login without a name when auth is off
+joined: bool = false,
 published: abi.PlayerState = .{},
 authentication: abi.AuthenticationState = .pending,
 network_rates: Network.Rates = .{},
@@ -94,6 +100,14 @@ backlogged_since_ms: ?u64 = null,
 player_closed_ms: ?u64 = null,
 dial_started_ns: u64 = 0,
 transfer_started_ns: u64 = 0,
+created_ms: u64,
+name_storage: [max_name_len]u8 = undefined,
+name_len: u8 = 0,
+// Why the player is leaving, kept from the first cause so later cleanup doesn't overwrite it
+end_reason: ?[]const u8 = null,
+end_error: ?anyerror = null,
+
+const max_name_len = 32;
 
 /// The link only owns `connection` once `watch` runs.
 pub fn create(env: *const Env, connection: *NetherNet.Connection, address: std.Io.net.IpAddress) !*Link {
@@ -109,6 +123,7 @@ pub fn create(env: *const Env, connection: *NetherNet.Connection, address: std.I
         .observer = if (env.observer_pool) |pool| try Observer.init(pool, env.player_bytes_per_second) else null,
         .managed = managed,
         .stage_since_ms = nowMs(env.io),
+        .created_ms = nowMs(env.io),
     };
     if (managed) |m| m.admission_pending = if (env.events.plugins) |plugins| plugins.admission != null else false;
     return self;
@@ -116,6 +131,7 @@ pub fn create(env: *const Env, connection: *NetherNet.Connection, address: std.I
 
 pub fn destroy(self: *Link) void {
     self.endTransfer(.player_left);
+    self.logEnd();
     self.env.events.disconnected(&self.player);
     self.cancelDial();
     self.dropBackend();
@@ -134,7 +150,53 @@ pub fn watch(self: *Link) void {
 /// Gives the connection back to the caller, for links that never got going.
 pub fn release(self: *Link) void {
     self.session = null;
+    self.ending("not admitted", null);
     self.destroy();
+}
+
+/// Records why the player is leaving; the first cause wins.
+pub fn ending(self: *Link, reason: []const u8, err: ?anyerror) void {
+    if (self.end_reason != null) return;
+    self.end_reason = reason;
+    self.end_error = err;
+}
+
+fn logEnd(self: *const Link) void {
+    const reason = self.end_reason orelse "disconnected";
+    const lasted = Log.elapsed(nowMs(self.env.io) -| self.created_ms);
+    if (!self.joined) {
+        if (self.end_error) |err|
+            log.debug("Connection from {f} closed before login after {f}: {s} ({t})", .{ self.address, lasted, reason, err })
+        else
+            log.debug("Connection from {f} closed before login after {f}: {s}", .{ self.address, lasted, reason });
+        return;
+    }
+    const backend = self.env.router.get(self.backend_id).name();
+    if (self.end_error) |err|
+        log.info("{f} left {s} after {f}: {s} ({t})", .{ self.who(), backend, lasted, reason, err })
+    else
+        log.info("{f} left {s} after {f}: {s}", .{ self.who(), backend, lasted, reason });
+}
+
+/// The player's name once known, their link id before that.
+pub fn who(self: *const Link) Who {
+    return .{ .link = self };
+}
+
+pub const Who = struct {
+    link: *const Link,
+
+    pub fn format(self: Who, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        const link = self.link;
+        if (link.name_len != 0) return w.writeAll(link.name_storage[0..link.name_len]);
+        try w.print("Player {d}", .{link.id});
+    }
+};
+
+fn logJoin(self: *Link) void {
+    if (self.joined) return;
+    self.joined = true;
+    log.info("{f} joined {s} from {f}", .{ self.who(), self.env.router.get(self.backend_id).name(), self.address });
 }
 
 pub fn connect(self: *Link) (error{NoBackendAvailable} || std.Io.ConcurrentError)!void {
@@ -149,8 +211,9 @@ pub fn connect(self: *Link) (error{NoBackendAvailable} || std.Io.ConcurrentError
     self.env.events.backendSelected(self.player, id.index());
     self.dial = .{};
     self.dial_started_ns = Metrics.nowNs(self.env.io);
-    const address = self.env.router.get(id).address;
-    self.dial_task = try self.env.io.concurrent(Dial.run, .{ &self.dial, self.env.transport, address, Scheduler.linkNotify(self) });
+    const backend = self.env.router.get(id);
+    routing_log.debug("{f} -> {f}, attempt {d}", .{ self.who(), backend.*, self.tried.count() });
+    self.dial_task = try self.env.io.concurrent(Dial.run, .{ &self.dial, self.env.transport, backend.address, Scheduler.linkNotify(self) });
 }
 
 pub fn isFinished(self: *const Link) bool {
@@ -321,9 +384,17 @@ pub fn sendPacket(self: *Link, target: abi.PacketTarget, bytes: []const u8) abi.
 
 fn announce(self: *Link, identity: bedwire.Identity) void {
     self.announced = true;
+    var len = @min(identity.display_name.len, max_name_len);
+    // Cut on a character boundary
+    if (len < identity.display_name.len) while (len > 0 and identity.display_name[len] & 0xc0 == 0x80) : (len -= 1) {};
+    @memcpy(self.name_storage[0..len], identity.display_name[0..len]);
+    self.name_len = @intCast(len);
+    self.logJoin();
+    log.debug("{f} has xuid {s}, {s}", .{ self.who(), identity.xuid, if (identity.online) "signed in to Xbox" else "offline" });
     self.published = self.playerState();
     const decision = self.env.events.authenticated(self.player, identity.display_name, identity.xuid, identity.uuid, identity.online, self.published);
     if (decision.action == .cancel) {
+        self.ending("rejected by a plugin", null);
         _ = self.disconnect("Login rejected");
         return;
     }
@@ -379,7 +450,12 @@ fn pumpPlayer(self: *Link) void {
         if (self.backend) |*backend| if (backend.backlogged(backlog_bytes)) return;
         const message = (session.next() catch return self.playerGone()) orelse return;
         self.forwardToBackend(message) catch |err| {
-            log.debug("dropping player {d}: {t}", .{ self.id, err });
+            log.debug("Dropping {f}: {t}", .{ self.who(), err });
+            self.ending(switch (err) {
+                error.LoginRejected => "login rejected",
+                error.BackendClosed => "backend connection lost",
+                else => "bad or unexpected packet",
+            }, err);
             _ = self.disconnect("");
             return;
         };
@@ -404,7 +480,10 @@ fn pumpBackend(self: *Link) void {
             paused = true;
             break;
         }
-        const message = (backend.next() catch |err| return self.fail(err)) orelse {
+        const message = (backend.next() catch |err| {
+            self.ending("backend closed the connection", err);
+            return self.fail(err);
+        }) orelse {
             drained = true;
             break;
         };
@@ -476,7 +555,7 @@ pub fn checkDeadlines(self: *Link, now_ms: u64) void {
     if (self.backlogged_since_ms) |since| {
         if (now_ms -| since >= deadlines.slow_player_ms) {
             self.env.stats.bump(.slow_players, 1);
-            log.debug("player {d} can't keep up, closing", .{self.id});
+            self.ending("connection too slow to keep up", null);
             _ = self.disconnect("Connection too slow");
             return;
         }
@@ -501,7 +580,11 @@ pub fn checkDeadlines(self: *Link, now_ms: u64) void {
         .resource_packs => stats.bump(.resource_pack_timeouts, 1),
         .joining, .playing => stats.bump(.join_timeouts, 1),
     }
-    log.debug("player {d} timed out in {t}", .{ self.id, stage });
+    self.ending(switch (stage) {
+        .login => "timed out logging in",
+        .resource_packs => "timed out downloading resource packs",
+        .joining, .playing => "timed out joining",
+    }, null);
     _ = self.disconnect("Timed out");
 }
 
@@ -535,8 +618,14 @@ fn observe(self: *Link, observer: *Observer, direction: bedwire.TapDirection, pa
     const stats = self.env.stats;
     switch (event) {
         .none => {},
-        .logged_in => stats.bump(.logins_observed, 1),
-        .gave_up => stats.bump(.observer_gave_up, 1),
+        .logged_in => {
+            stats.bump(.logins_observed, 1);
+            self.logJoin();
+        },
+        .gave_up => {
+            stats.bump(.observer_gave_up, 1);
+            self.logJoin();
+        },
         .login_verified => {
             stats.bump(.logins_observed, 1);
             stats.bump(.logins_verified, 1);
@@ -559,18 +648,26 @@ fn observe(self: *Link, observer: *Observer, direction: bedwire.TapDirection, pa
 }
 
 fn adopt(self: *Link, result: Dial.Result) void {
+    const took = Log.elapsed(Metrics.sinceUs(self.env.io, self.dial_started_ns) / std.time.us_per_ms);
+    const backend = self.env.router.get(self.backend_id);
     const connection = result catch |err| {
-        log.warn("backend {f} connect failed: {t}", .{ self.env.router.get(self.backend_id).*, err });
         self.env.stats.bump(.backend_failures, 1);
         if (err == error.Canceled) return self.closeSession();
+        // Health already said it's down, so only the first failure after that is worth a warning
+        const known_down = if (self.env.health) |health| health.status(self.backend_id) == .unhealthy else false;
+        if (known_down)
+            backend_log.debug("Can't reach {f} for {f}: {s} ({t}, {f})", .{ backend.*, self.who(), NetherNet.describe(err), err, took })
+        else
+            backend_log.warn("Can't reach {f}: {s} ({t}, {f})", .{ backend.*, NetherNet.describe(err), err, took });
         if (self.env.health) |health| health.dialFailed(self.env.io, self.backend_id);
         if (self.session == null) return;
         self.connect() catch |retry_err| {
-            log.warn("giving up on player: {t}", .{retry_err});
+            self.ending("no backend available", retry_err);
             self.closeSession();
         };
         return;
     };
+    backend_log.debug("{f} connected to {s} in {f}", .{ self.who(), backend.name(), took });
     self.backend = .init(connection);
     self.backend.?.watch(Scheduler.linkNotify(self));
     self.network_rates = .{};
@@ -641,9 +738,27 @@ fn endTransfer(self: *Link, event: ?Transfer.State.Event) void {
         self.backend_id = transfer.target;
         self.network_rates = .{};
     }
+    self.logTransfer(transfer, source, event);
     self.publishState();
     self.env.events.transferEnded(self.player, source.index(), transfer.target.index(), failure(transfer));
     transfer.destroy(self.env.gpa, self.env.io);
+}
+
+fn logTransfer(self: *const Link, transfer: *const Transfer, source: Backend.Id, event: ?Transfer.State.Event) void {
+    const from = self.env.router.get(source).name();
+    const to = self.env.router.get(transfer.target).name();
+    const took = Log.elapsed(Metrics.sinceUs(self.env.io, self.transfer_started_ns) / std.time.us_per_ms);
+    const why: []const u8 = switch (failure(transfer)) {
+        .none => return transfer_log.info("{f} moved {s} -> {s} in {f}", .{ self.who(), from, to, took }),
+        .incompatible_content => "the target's resource packs don't match",
+        .failed_after_commit => "the target failed after the switch",
+        .timed_out => "timed out",
+        else => if (event == .source_failed) "the current backend failed" else "the target couldn't be reached or refused the player",
+    };
+    if (event == .player_left or event == .shutdown)
+        transfer_log.debug("{f} left while moving {s} -> {s}", .{ self.who(), from, to })
+    else
+        transfer_log.warn("{f} couldn't move {s} -> {s} after {f}: {s}", .{ self.who(), from, to, took, why });
 }
 
 fn failure(transfer: *const Transfer) abi.TransferFailure {
@@ -674,7 +789,8 @@ fn onBackendMessage(self: *Link, message: NetherNet.Message) void {
         return;
     }
     if (self.managed) |managed| return managed.fromBackend(self.ends(), payload) catch |err| {
-        log.debug("managed session failed: {t}", .{err});
+        log.debug("Managed session of {f} failed on a backend packet: {t}", .{ self.who(), err });
+        self.ending("backend sent something the proxy can't handle", err);
         self.backend_error = err;
     };
     const observer = &self.observer.?;
@@ -705,7 +821,8 @@ fn cancelDial(self: *Link) void {
 }
 
 fn fail(self: *Link, err: anyerror) void {
-    log.debug("closing link: {t}", .{err});
+    log.debug("Closing {f}: {t}", .{ self.who(), err });
+    self.ending("session failed", err);
     const committed = if (self.transfer) |transfer| transfer.state.phase.committed() else false;
     self.endTransfer(if (committed) .target_failed else .source_failed);
     self.dropBackend();

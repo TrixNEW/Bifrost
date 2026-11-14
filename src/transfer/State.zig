@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const State = @This();
-const log = std.log.scoped(.transfer);
+const log = @import("../log.zig").scoped(.transfer);
 
 pub const Epoch = u32;
 
@@ -88,7 +88,7 @@ pub fn applyFrom(self: *State, epoch: Epoch, event: Event, now_ns: u64) Step {
 pub fn apply(self: *State, event: Event, now_ns: u64) Step {
     const from = self.phase;
     const step = self.decide(event, now_ns);
-    log.debug("transfer {d}: {t} in {t} -> {t} ({t})", .{ self.epoch, event, from, self.phase, step.action });
+    log.trace("Transfer {d}: {t} in {t} -> {t} ({t})", .{ self.epoch, event, from, self.phase, step.action });
     return step;
 }
 

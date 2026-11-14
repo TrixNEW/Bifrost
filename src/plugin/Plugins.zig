@@ -13,7 +13,7 @@ const sdk = @import("sdk.zig");
 const Notify = @import("../net/Notify.zig");
 
 const Plugins = @This();
-const log = std.log.scoped(.plugin);
+const log = @import("../log.zig").scoped(.plugin);
 
 pub const max_name_len = 64;
 pub const max_version_len = 64;
@@ -209,33 +209,33 @@ pub fn load(self: *Plugins, entry: abi.InitFn, library: ?Library, manifest: ?*co
     Work.hosted = outer;
     self.initializing.store(null, .release);
     if (status != .ok) {
-        log.warn("plugin init failed: {t}", .{status});
+        log.warn("{s} failed to start: its init returned {t}", .{ if (manifest) |m| m.name() else "A plugin", status });
         return error.PluginInitFailed;
     }
     errdefer shutdown(loaded);
 
     const plugin = &loaded.plugin;
     if (plugin.abi_version != abi.version or plugin.struct_size < @sizeOf(abi.Plugin)) {
-        log.warn("plugin targets ABI {d}, Bifrost has {d}", .{ plugin.abi_version, abi.version });
+        log.warn("{s} targets plugin ABI {d}, Bifrost has {d}; rebuild it against this release", .{ if (manifest) |m| m.name() else "A plugin", plugin.abi_version, abi.version });
         return error.IncompatiblePlugin;
     }
     const meta = &loaded.metadata;
     const plugin_name = required(plugin.name, max_name_len) orelse {
-        log.warn("plugin refused: its name must be 1 to {d} bytes of printable UTF-8", .{max_name_len});
+        log.warn("Refused a plugin: its name must be 1 to {d} bytes of printable UTF-8", .{max_name_len});
         return error.InvalidMetadata;
     };
     const version = required(plugin.plugin_version, max_version_len) orelse {
-        log.warn("plugin {s} refused: its version must be 1 to {d} bytes of printable UTF-8", .{ plugin_name, max_version_len });
+        log.warn("Refused {s}: its version must be 1 to {d} bytes of printable UTF-8", .{ plugin_name, max_version_len });
         return error.InvalidMetadata;
     };
     if (manifest) |expected| {
         if (!std.mem.eql(u8, plugin_name, expected.name()) or !std.mem.eql(u8, version, expected.version())) {
-            log.warn("plugin {s} {s} refused: plugin.toml says {s} {s}", .{ plugin_name, version, expected.name(), expected.version() });
+            log.warn("Refused {s} {s}: its plugin.toml says {s} {s}", .{ plugin_name, version, expected.name(), expected.version() });
             return error.MetadataMismatch;
         }
     }
     if (self.isLoaded(plugin_name)) {
-        log.warn("plugin {s} refused: a plugin with that name is already loaded", .{plugin_name});
+        log.warn("Refused {s}: a plugin with that name is already loaded", .{plugin_name});
         return error.DuplicatePlugin;
     }
     @memcpy(meta.name_buffer[0..plugin_name.len], plugin_name);
@@ -248,7 +248,7 @@ pub fn load(self: *Plugins, entry: abi.InitFn, library: ?Library, manifest: ?*co
     }
     const unsupported = @as(u64, @bitCast(plugin.capabilities)) & ~@as(u64, @bitCast(abi.Capabilities.supported));
     if (unsupported != 0) {
-        log.warn("plugin {s} needs unsupported capabilities 0x{x}", .{ loaded.label(), unsupported });
+        log.warn("Refused {s}: it needs capabilities this Bifrost lacks (0x{x})", .{ loaded.label(), unsupported });
         return error.UnsupportedCapability;
     }
     const caps = plugin.capabilities;
@@ -263,7 +263,7 @@ pub fn load(self: *Plugins, entry: abi.InitFn, library: ?Library, manifest: ?*co
     else
         null;
     if (undeclared) |capability| {
-        log.warn("plugin {s} registered hooks without declaring {s}", .{ loaded.label(), capability });
+        log.warn("Refused {s}: it registered hooks without declaring {s}", .{ loaded.label(), capability });
         return error.UndeclaredCapability;
     }
 
@@ -289,11 +289,10 @@ pub fn load(self: *Plugins, entry: abi.InitFn, library: ?Library, manifest: ?*co
     if (caps.admission) self.admission = loaded;
     loaded.ready.store(true, .release);
     if (meta.package.len != 0) {
-        log.info("loaded plugin {s} {s} from {s}: {s}", .{ meta.name(), meta.version(), meta.package, meta.description() });
-    } else if (meta.description_len == 0) {
-        log.info("loaded plugin {s} {s}", .{ meta.name(), meta.version() });
+        log.info("Loaded {s} {s}", .{ meta.name(), meta.version() });
+        log.debug("{s} is {s}: {s}", .{ meta.name(), meta.package, meta.description() });
     } else {
-        log.info("loaded plugin {s} {s}: {s}", .{ meta.name(), meta.version(), meta.description() });
+        log.info("Loaded {s} {s}", .{ meta.name(), meta.version() });
     }
 }
 

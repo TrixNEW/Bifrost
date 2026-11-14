@@ -5,7 +5,7 @@ const Work = @import("Work.zig");
 const trace = @import("../trace.zig");
 pub const Decoded = @import("Decoded.zig");
 
-const log = std.log.scoped(.plugin);
+const log = @import("../log.zig").scoped(.plugin);
 
 pub const id_count = 1024;
 pub const max_replacement = 128 * 1024;
@@ -322,7 +322,7 @@ pub fn warnSlow(metrics: *Metrics, name: []const u8, elapsed_ns: u64, io: std.Io
     const at = now(io);
     if (metrics.last_warning_ns != 0 and at -| metrics.last_warning_ns < slow_warning_interval_ns) return;
     metrics.last_warning_ns = at;
-    log.warn("plugin {s} took {d} us " ++ what, .{ name, elapsed_ns / std.time.ns_per_us } ++ args);
+    log.warn("{s} took {d}us " ++ what, .{ name, elapsed_ns / std.time.ns_per_us } ++ args);
 }
 
 pub fn now(io: std.Io) u64 {

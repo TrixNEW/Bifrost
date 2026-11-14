@@ -9,7 +9,7 @@ const Io = std.Io;
 const ext = library_format.extension;
 pub const library_extension = ext;
 
-const log = std.log.scoped(.plugin);
+const log = @import("../log.zig").scoped(.plugin);
 
 pub const manifest_file = "plugin.toml";
 pub const max_manifest_bytes = abi.max_manifest_bytes;
@@ -123,11 +123,11 @@ fn checkShape(source: []const u8, label: []const u8) error{InvalidManifest}!void
 pub fn discover(plugins: *Plugins, io: Io, path: []const u8, disabled: []const []const u8) !void {
     var dir = Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| switch (err) {
         error.FileNotFound => {
-            log.info("no {s} directory, so no plugins", .{path});
+            log.debug("No {s} directory, so no plugins", .{path});
             return;
         },
         else => {
-            log.warn("can't open plugin directory {s}: {t}", .{ path, err });
+            log.warn("Can't open plugin directory {s}: {t}", .{ path, err });
             return err;
         },
     };
@@ -148,7 +148,7 @@ pub fn discover(plugins: *Plugins, io: Io, path: []const u8, disabled: []const [
         }
         if (!hasExtension(entry.name)) continue;
         if (isDisabled(entry.name, disabled)) {
-            log.info("skipping disabled plugin {s}", .{entry.name});
+            log.info("Skipping disabled {s}", .{entry.name});
             continue;
         }
         if (kind == .sym_link) return error.SymlinkedLibrary;
@@ -193,7 +193,7 @@ pub fn load(plugins: *Plugins, io: Io, dir: Io.Dir, name: []const u8) !void {
     if (!std.mem.eql(u8, std.fs.path.dirname(path) orelse "", parent)) return error.LibraryOutsideDirectory;
 
     var library = Library.open(path) catch |err| {
-        log.warn("{s}: can't load it or a library it depends on ({t})", .{ path, err });
+        log.warn("Can't load {s} or a library it depends on: {t}", .{ path, err });
         return err;
     };
     errdefer library.close();

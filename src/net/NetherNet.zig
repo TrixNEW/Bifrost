@@ -152,6 +152,24 @@ fn dialToken(self: *const NetherNet, now: i64) ![]u8 {
     return self.gpa.dupe(u8, cache.text);
 }
 
+/// Which stage a dial or connection failed in, in words an operator can act on.
+pub fn describe(err: anyerror) []const u8 {
+    return switch (err) {
+        error.ConnectionRefused => "signaling refused, nothing listens on that port",
+        error.NoAnswer => "signaling got no answer in time",
+        error.HttpFailure, error.ServiceUnavailable, error.MissingAnswer, error.RemoteFailure, error.MalformedSignal, error.UnexpectedSignal, error.UnexpectedMessage, error.MalformedSdp, error.InvalidNetworkId => "signaling failed",
+        error.Unauthorized, error.Forbidden, error.AuthenticationFailed, error.InvalidIdentity, error.IdentityNotAllowed, error.UntrustedIssuer, error.ExpiredIdentity, error.SignatureVerificationFailed, error.UnknownSigningKey => "the backend rejected the proxy's identity",
+        error.IceConnectFailed, error.NoLocalIceCandidate => "ICE found no working UDP path, check firewalls and the UDP port range",
+        error.Timeout => "ICE or DTLS timed out after signaling",
+        error.ConnectionClosed, error.ConnectionResetByPeer => "closed during setup",
+        error.NetworkUnreachable, error.HostUnreachable, error.NetworkDown => "network unreachable",
+        error.AddressInUse, error.SystemResources, error.ProcessFdQuotaExceeded, error.SystemFdQuotaExceeded => "out of local sockets or ports",
+        error.WebRtcFailure => "WebRTC failed",
+        error.OutOfMemory => "out of memory",
+        else => "connection failed",
+    };
+}
+
 /// The UDP address ICE settled on, if libdatachannel can tell.
 pub fn remoteAddress(connection: *Connection) ?std.Io.net.IpAddress {
     var local: [128]u8 = undefined;
@@ -167,6 +185,12 @@ fn parseCandidateAddress(text: []const u8) ?std.Io.net.IpAddress {
         const host = std.mem.trimEnd(u8, std.mem.trimStart(u8, text[0..colon], "["), "]");
         return std.Io.net.IpAddress.parse(host, port) catch null;
     };
+}
+
+test "dial failures name their stage" {
+    try std.testing.expectEqualStrings("signaling got no answer in time", describe(error.NoAnswer));
+    try std.testing.expect(std.mem.startsWith(u8, describe(error.IceConnectFailed), "ICE"));
+    try std.testing.expectEqualStrings("connection failed", describe(error.SomethingElse));
 }
 
 test "candidate addresses parse with or without brackets" {

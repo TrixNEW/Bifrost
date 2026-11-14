@@ -7,7 +7,7 @@ const wire = protocol.packets.available_commands;
 const Packet = wire.Packet;
 const Command = wire.Command;
 
-const log = std.log.scoped(.managed);
+const log = @import("../log.zig").scoped(.plugin);
 
 // RAWTEXT | ARG_FLAG_VALID
 const raw_text: u32 = 0x100000 | 70;
@@ -38,7 +38,7 @@ pub fn merge(arena: std.mem.Allocator, plugins: *const Plugins, backend: ?[]cons
         var it = packet.commands.iterator();
         while (try it.next()) |command| {
             if (owned(plugins, command.name)) {
-                log.debug("plugin command /{s} replaces the backend's", .{command.name});
+                log.debug("Plugin command /{s} replaces the backend's", .{command.name});
                 continue;
             }
             commands.appendAssumeCapacity(command);

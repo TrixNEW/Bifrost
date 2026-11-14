@@ -1,6 +1,7 @@
 const std = @import("std");
 const nethernet = @import("nethernet");
 const NetherNet = @import("NetherNet.zig");
+const log = @import("../log.zig").scoped(.nethernet);
 
 /// Answers HTTP signaling and hands every established connection to `sink`.
 const Listener = @This();
@@ -20,6 +21,8 @@ pub const Options = struct {
     // Public addresses a NAT or port forward exposes the ICE ports on
     advertise_addresses: []const []const u8 = &.{},
     status: ?Status = null,
+    // NetherNet's own signaling and negotiation diagnostics, printed unformatted
+    trace: bool = false,
 };
 
 io: std.Io,
@@ -37,6 +40,7 @@ pub fn start(gpa: std.mem.Allocator, io: std.Io, transport: *NetherNet, address:
         .maximum_http_workers = @max(options.max_negotiations, 8),
         .status_provider = options.status,
         .advertise_addresses = options.advertise_addresses,
+        .trace = options.trace,
     });
     errdefer endpoint.destroy();
     self.* = .{ .io = io, .endpoint = endpoint, .sink = sink };
@@ -56,7 +60,10 @@ pub fn localAddress(self: *const Listener) std.Io.net.IpAddress {
 
 fn run(self: *Listener) void {
     while (true) {
-        const connection = self.endpoint.accept() catch return;
+        const connection = self.endpoint.accept() catch |err| {
+            if (@as(anyerror, err) != error.Canceled and @as(anyerror, err) != error.Closed) log.err("Stopped accepting players: {t}", .{err});
+            return;
+        };
         self.sink.accept(self.sink.context, connection);
     }
 }

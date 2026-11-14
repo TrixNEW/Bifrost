@@ -14,7 +14,9 @@ const Metrics = @import("Metrics.zig");
 const Plugins = @import("../plugin/Plugins.zig");
 
 const Workers = @This();
-const log = std.log.scoped(.stats);
+const Log = @import("../log.zig");
+const log = Log.scoped(.stats);
+const net_log = Log.scoped(.network);
 
 const report_interval_s = 60;
 const metrics_timeout_ms = 2_000;
@@ -109,6 +111,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         .max_negotiations_per_ip = config.max_negotiations_per_ip,
         .advertise_addresses = advertised[0..config.advertise_count],
         .status = .{ .context = self, .get = serverStatus },
+        .trace = Log.enabled(.trace),
     });
     return self;
 }
@@ -249,12 +252,12 @@ fn pluginLine(w: *std.Io.Writer, name: []const u8, plugin: []const u8, amount: a
 
 fn serveMetrics(self: *Workers) void {
     const server = &self.metrics.?;
-    log.info("metrics on http://{f}/metrics", .{server.socket.address});
+    net_log.info("Metrics on http://{f}/metrics", .{server.socket.address});
     while (true) {
         const stream = server.accept(self.io) catch |err| switch (err) {
             error.Canceled => return,
             else => {
-                log.warn("metrics accept failed: {t}", .{err});
+                net_log.warn("Metrics listener can't accept: {t}", .{err});
                 self.io.sleep(.fromMilliseconds(100), .awake) catch return;
                 continue;
             },
@@ -262,7 +265,7 @@ fn serveMetrics(self: *Workers) void {
         defer stream.close(self.io);
         self.answerMetrics(stream) catch |err| switch (err) {
             error.Canceled => return,
-            else => log.debug("metrics request failed: {t}", .{err}),
+            else => net_log.debug("Metrics request failed: {t}", .{err}),
         };
     }
 }
@@ -304,23 +307,32 @@ fn operate(io: std.Io, operation: std.Io.Operation, timeout: std.Io.Timeout) !st
     };
 }
 
+// An idle proxy only reports at debug, so a quiet server's log stays quiet
 fn report(self: *Workers) void {
+    var last_accepted: u64 = 0;
     while (true) {
         self.io.sleep(.fromSeconds(report_interval_s), .awake) catch return;
         const totals_now = self.totals();
-        log.info("{d} online, {d} joined, {d}/{d} backends up, {d} backend failures, {Bi:.1} to backends, {Bi:.1} to players", .{
-            self.admission.active.load(.monotonic),
+        const online = self.admission.active.load(.monotonic);
+        const level: Log.Level = if (online != 0 or totals_now.sessions_accepted != last_accepted) .info else .debug;
+        last_accepted = totals_now.sessions_accepted;
+        if (!Log.enabled(level)) continue;
+        const format = "{d} online, {d} joined, {d}/{d} backends up, {d} backend failures, {Bi:.1} to backends, {Bi:.1} to players";
+        const args = .{
+            online,
             totals_now.sessions_accepted,
             self.health.healthyCount(),
             self.health.backends.len,
             totals_now.backend_failures,
             totals_now.bytes_to_backend,
             totals_now.bytes_to_player,
-        });
+        };
+        if (level == .info) log.info(format, args) else log.debug(format, args);
         const timeouts = totals_now.login_timeouts + totals_now.resource_pack_timeouts + totals_now.join_timeouts;
         const refusals = self.budget.refusals.load(.monotonic);
         if (timeouts + totals_now.logins_throttled + totals_now.player_floods + totals_now.slow_players + refusals + totals_now.sessions_rejected == 0) continue;
-        log.info("{d} rejected, {d} timed out, {d} logins throttled, {d} floods, {d} too slow, {d} queue refusals, {Bi:.1} queued", .{
+        const problems = "{d} rejected, {d} timed out, {d} logins throttled, {d} floods, {d} too slow, {d} queue refusals, {Bi:.1} queued";
+        const counts = .{
             totals_now.sessions_rejected,
             timeouts,
             totals_now.logins_throttled,
@@ -328,7 +340,8 @@ fn report(self: *Workers) void {
             totals_now.slow_players,
             refusals,
             self.budget.used.load(.monotonic),
-        });
+        };
+        if (level == .info) log.info(problems, counts) else log.debug(problems, counts);
     }
 }
 

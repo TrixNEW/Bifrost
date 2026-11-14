@@ -25,7 +25,8 @@ const Current = protocol.Current;
 pub const Ecdsa = bedwire.crypto.spki.Ecdsa;
 
 const Managed = @This();
-const log = std.log.scoped(.managed);
+const log = @import("../log.zig").scoped(.auth);
+const session_log = @import("../log.zig").scoped(.session);
 
 // Backends take the proxy's certificate chain in place of a Microsoft token
 pub const backend_features: bedwire.SessionFeatures = .{ .login_flow = .certificate_chain };
@@ -131,6 +132,19 @@ commands_sent: bool = false,
 // Player packets sent before the backend is ready
 early: PacketQueue,
 inbound: Rate = .unlimited,
+
+const AddressText = struct {
+    address: ?std.Io.net.IpAddress,
+
+    pub fn format(self: AddressText, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (self.address) |address| return w.print("{f}", .{address});
+        try w.writeAll("an unknown address");
+    }
+};
+
+fn addressText(self: *const Managed) AddressText {
+    return .{ .address = self.player_address };
+}
 
 pub fn create(gpa: std.mem.Allocator, shared: *Shared, player_address: std.Io.net.IpAddress, early_packets: u32, early_bytes: u32) !*Managed {
     const self = try gpa.create(Managed);
@@ -482,7 +496,7 @@ fn pluginCommands(self: *const Managed) ?*const Plugins {
 fn advertise(self: *Managed, arena: std.mem.Allocator, plugins: *const Plugins, backend: ?[]const u8) ?[]const u8 {
     self.commands_sent = true;
     return commands.merge(arena, plugins, backend, limits.max_packet_bytes, protocolLimits()) catch |err| {
-        log.info("plugin commands not advertised: {t}", .{err});
+        session_log.warn("Plugin commands not advertised: {t}", .{err});
         return null;
     };
 }
@@ -616,7 +630,7 @@ fn authenticate(self: *Managed, ends: Ends, packet: bedwire.Packet) !void {
     const policy: bedwire.TrustPolicy = .{ .oidc = .{ .now = std.Io.Clock.real.now(ends.io).toSeconds(), .keys = self.shared.keys } };
     var identity = self.player.authenticateLoginPacket(self.gpa, packet, policy) catch |err| {
         if (err == error.OutOfMemory) ends.stats.bump(.auth_unavailable, 1) else ends.stats.bump(.logins_rejected, 1);
-        log.info("login rejected: {t}", .{err});
+        log.info("Rejected a login from {f}: {t}", .{ self.addressText(), err });
         return err;
     };
     errdefer identity.deinit();
@@ -626,12 +640,12 @@ fn authenticate(self: *Managed, ends: Ends, packet: bedwire.Packet) !void {
     const proven = ends.player.identityKey() orelse return error.Unauthenticated;
     if (!std.mem.eql(u8, &proven.toUncompressedSec1(), &identity.public_key.toUncompressedSec1())) {
         ends.stats.bump(.logins_rejected, 1);
-        log.info("login rejected: {s} signed in with a key the connection never proved", .{identity.display_name});
+        log.info("Rejected {s} from {f}: their login is signed with a key the connection never proved, likely a replay", .{ identity.display_name, self.addressText() });
         return error.Unauthenticated;
     }
 
     ends.stats.bump(.logins_verified, 1);
-    log.info("verified {s} (xuid {s})", .{ identity.display_name, identity.xuid });
+    log.debug("Verified {s}", .{identity.display_name});
     self.identity = identity;
     self.client_data = client_data;
 }

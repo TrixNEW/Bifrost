@@ -21,7 +21,7 @@ const Queue = @import("Queue.zig");
 const Handoff = @import("Handoff.zig");
 
 const Transfer = @This();
-const log = std.log.scoped(.transfer);
+const log = @import("../log.zig").scoped(.transfer);
 
 const max_messages_per_turn = 64;
 const max_queued_packets = 256;
@@ -107,7 +107,7 @@ pub fn create(host: Host, target: Backend.Id, address: std.Io.net.IpAddress, epo
     errdefer self.cancelTasks(host.io);
     try self.armTimer(host);
     host.stats.bump(.transfers_started, 1);
-    log.info("transfer {d} to backend {d} started", .{ epoch, target.index() });
+    log.debug("Transfer {d} to backend {d} started", .{ epoch, target.index() });
     return self;
 }
 
@@ -140,7 +140,7 @@ pub fn service(self: *Transfer, host: Host) error{Canceled}!Result {
             self.on(host, .dialed);
             if (self.result == .running) self.upstream.connected(self.context(host)) catch self.on(host, .target_failed);
         } else |err| {
-            log.info("transfer {d}: dial failed: {t}", .{ self.state.epoch, err });
+            log.debug("Transfer {d} can't reach the target: {t}", .{ self.state.epoch, err });
             self.on(host, .target_failed);
         }
     };
@@ -151,7 +151,7 @@ pub fn service(self: *Transfer, host: Host) error{Canceled}!Result {
     if (self.result != .running) return self.result;
     if (self.state.phase == .syncing_client) {
         self.syncClient(host) catch |err| {
-            log.info("transfer {d}: client sync failed: {t}", .{ self.state.epoch, err });
+            log.debug("Transfer {d} failed syncing the client: {t}", .{ self.state.epoch, err });
             self.on(host, .target_failed);
         };
         return self.result;
@@ -170,7 +170,7 @@ pub fn service(self: *Transfer, host: Host) error{Canceled}!Result {
             break;
         };
         if (message.reliability == .reliable) self.receive(host, message.data) catch |err| {
-            log.info("transfer {d}: target failed: {t}", .{ self.state.epoch, err });
+            log.debug("Transfer {d} target failed: {t}", .{ self.state.epoch, err });
             self.seen.failed = true;
         };
         // Once the world is in, the link reads the target with backpressure
@@ -192,7 +192,7 @@ fn settle(self: *Transfer, host: Host) void {
             switch (mismatch) {
                 inline else => |reason| host.stats.bump(@field(std.meta.FieldEnum(Stats), "incompatible_" ++ @tagName(reason)), 1),
             }
-            log.info("transfer {d}: target content is incompatible: {t}", .{ self.state.epoch, mismatch });
+            log.debug("Transfer {d} target content is incompatible: {t}", .{ self.state.epoch, mismatch });
             return self.on(host, .target_failed);
         }
         self.on(host, .target_ready);
@@ -291,7 +291,7 @@ fn on(self: *Transfer, host: Host, event: State.Event) void {
         .none, .stale => {},
         .prepare_client => return self.on(host, .client_prepared),
         .commit => self.commit(host) catch |err| {
-            log.info("transfer {d}: commit failed: {t}", .{ self.state.epoch, err });
+            log.debug("Transfer {d} commit failed: {t}", .{ self.state.epoch, err });
             return self.on(host, .target_failed);
         },
         .close_source => {
@@ -300,11 +300,11 @@ fn on(self: *Transfer, host: Host, event: State.Event) void {
             return self.on(host, .source_closed);
         },
         .finish => {
-            log.info("transfer {d} to backend {d} committed", .{ self.state.epoch, self.target.index() });
+            log.debug("Transfer {d} to backend {d} committed", .{ self.state.epoch, self.target.index() });
             self.result = .finished;
         },
         .roll_back => {
-            log.info("transfer {d} rolled back in {t}", .{ self.state.epoch, phase });
+            log.debug("Transfer {d} rolled back in {t}", .{ self.state.epoch, phase });
             self.result = .rolled_back;
         },
         .disconnect => self.result = .disconnect,
@@ -342,7 +342,7 @@ fn commit(self: *Transfer, host: Host) !void {
     self.publish(host);
     var outbox: Managed.Outbox = .init(host.gpa);
     defer outbox.deinit();
-    if (managed.client_state.untracked) log.info("transfer {d}: the source showed the client more than is tracked, some of it may linger", .{self.state.epoch});
+    if (managed.client_state.untracked) log.debug("Transfer {d}: the source showed the client more than is tracked, some of it may linger", .{self.state.epoch});
     try managed.client_state.reset(&outbox);
     // The client keeps its old game mode unless told, and the target never sends it again
     if (Managed.Gameplay.gameMode(self.target_modes.player, self.target_modes.world)) |mode| try outbox.emit(.{ .set_player_game_type = .{ .player_game_type = @fromBackingInt(mode) } });
@@ -364,7 +364,7 @@ fn release(self: *Transfer, host: Host) !void {
     managed.hold = null;
     var slices: [max_held_packets][]const u8 = undefined;
     const skipped = try managed.deliver(host.ends(), self.queue.slices(&slices));
-    if (skipped != 0) log.debug("transfer {d}: held back {d} world packets for client sync", .{ self.state.epoch, skipped });
+    if (skipped != 0) log.trace("Transfer {d} held back {d} world packets for client sync", .{ self.state.epoch, skipped });
     self.queue.clear();
 }
 

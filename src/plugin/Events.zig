@@ -4,7 +4,7 @@ const Plugins = @import("Plugins.zig");
 const Handles = @import("Handles.zig");
 
 const Events = @This();
-const log = std.log.scoped(.plugin);
+const log = @import("../log.zig").scoped(.plugin);
 
 plugins: ?*Plugins = null,
 worker: u32 = 0,
@@ -27,7 +27,7 @@ pub fn proxyStopping(self: Events) void {
 pub fn connected(self: Events, route: Handles.Route, address: std.Io.net.IpAddress, state: abi.PlayerState) abi.Player {
     const plugins = self.plugins orelse return .{};
     const player = plugins.handles.acquire(plugins.gpa, route) catch |err| {
-        log.warn("player hidden from plugins: {t}", .{err});
+        log.warn("A player is hidden from plugins: {t}", .{err});
         return .{};
     };
     _ = plugins.handles.setState(player, state);

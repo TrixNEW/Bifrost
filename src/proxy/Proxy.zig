@@ -24,7 +24,8 @@ const trace = @import("../trace.zig");
 
 /// One worker. Owns its links and runs them on one task, so nothing in here needs a lock.
 const Proxy = @This();
-const log = std.log.scoped(.proxy);
+const log = @import("../log.zig").scoped(.player);
+const transfer_log = @import("../log.zig").scoped(.transfer);
 
 const mailbox_capacity = 64;
 const inbox_capacity = 64;
@@ -231,7 +232,7 @@ fn startTransfer(self: *Proxy, request: TransferRequest) void {
 
 pub fn message(self: *Proxy, link_id: u64, text: []const u8) void {
     const link = self.findLink(link_id) orelse return;
-    link.sendMessage(text) catch |err| log.debug("plugin message dropped: {t}", .{err});
+    link.sendMessage(text) catch |err| log.debug("Plugin message to {f} dropped: {t}", .{ link.who(), err });
 }
 
 fn findLink(self: *Proxy, id: u64) ?*Link {
@@ -312,7 +313,11 @@ fn routeTransfer(context: *anyopaque, link: u64, backend: u32) abi.Status {
 }
 
 fn rejectTransfer(self: *Proxy, request: TransferRequest, err: anyerror) void {
-    log.info("transfer of player {d} to backend {d} rejected: {t}", .{ request.player, request.target.index(), err });
+    const target = if (request.target.index() < self.router.backends.len) self.router.get(request.target).name() else "an unknown backend";
+    if (self.findLink(request.player)) |link|
+        transfer_log.info("Not moving {f} to {s}: {t}", .{ link.who(), target, err })
+    else
+        transfer_log.debug("Not moving player {d} to {s}: {t}", .{ request.player, target, err });
     self.stats.bump(.transfers_rejected, 1);
 }
 
@@ -331,7 +336,10 @@ pub fn run(self: *Proxy) void {
 
 // Players hear why and their last packets get through, a dead peer can't hold this up for long
 fn drain(self: *Proxy) void {
-    for (self.links.values()) |link| _ = link.disconnect("Proxy shutting down");
+    for (self.links.values()) |link| {
+        link.ending("proxy shutting down", null);
+        _ = link.disconnect("Proxy shutting down");
+    }
     const deadline_ms = nowMs(self.io) + Peer.drain_timeout_ms;
     while (self.links.count() != 0) {
         const now_ms = nowMs(self.io);
@@ -411,10 +419,20 @@ fn welcome(self: *Proxy, connection: *NetherNet.Connection) void {
         self.stats.bump(.sessions_rejected, 1);
         const now_ms = nowMs(self.io);
         if (now_ms -| self.rejections_logged_ms >= rejection_log_interval_ms or self.rejections_logged_ms == 0) {
-            log.warn("rejecting player: {t} ({d} more since the last warning)", .{ err, self.rejections_unlogged });
+            log.warn("Turning away a connection: {s} ({t}, {d} more since the last warning)", .{ rejection(err), err, self.rejections_unlogged });
             self.rejections_logged_ms = now_ms;
             self.rejections_unlogged = 0;
         } else self.rejections_unlogged += 1;
+    };
+}
+
+fn rejection(err: anyerror) []const u8 {
+    return switch (err) {
+        error.ServerFull => "server is full",
+        error.TooManyFromAddress => "too many players from one address",
+        error.NoBackendAvailable => "no backend is available",
+        error.OutOfMemory => "out of memory",
+        else => "couldn't set up the session",
     };
 }
 

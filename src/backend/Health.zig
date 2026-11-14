@@ -3,7 +3,7 @@ const Config = @import("../config/Config.zig");
 const Backend = @import("Backend.zig");
 
 const Health = @This();
-const log = std.log.scoped(.health);
+const log = @import("../log.zig").scoped(.backend);
 
 pub const Status = enum(u8) { unknown, healthy, unhealthy };
 
@@ -75,12 +75,30 @@ fn check(self: *Health, io: std.Io, index: usize) void {
     const backend = &self.backends[index];
     const players_now = probe(io, backend.address, self.timeout_ms) catch |err| {
         if (err == error.Canceled) return;
-        if (self.entries[index].status.swap(.unhealthy, .acq_rel) != .unhealthy) log.warn("backend {f} is down: {t}", .{ backend.*, err });
+        if (self.entries[index].status.swap(.unhealthy, .acq_rel) != .unhealthy)
+            log.warn("{f} is down: {s} ({t})", .{ backend.*, probeFailure(err), err })
+        else
+            log.debug("{f} still down: {t}", .{ backend.*, err });
         return;
     };
     const entry = &self.entries[index];
     entry.players.store(players_now, .monotonic);
-    if (entry.status.swap(.healthy, .acq_rel) == .unhealthy) log.info("backend {f} is back", .{backend.*});
+    switch (entry.status.swap(.healthy, .acq_rel)) {
+        .unknown => log.info("{f} is up ({d} online)", .{ backend.*, players_now }),
+        .unhealthy => log.info("{f} is back up ({d} online)", .{ backend.*, players_now }),
+        .healthy => {},
+    }
+}
+
+fn probeFailure(err: anyerror) []const u8 {
+    return switch (err) {
+        error.ConnectionRefused => "nothing is listening on its signaling port",
+        error.Timeout => "its status query got no answer in time",
+        error.BackendUnavailable => "it answered the status query with an error",
+        error.NetworkUnreachable, error.HostUnreachable => "its address is unreachable",
+        error.ConnectionResetByPeer, error.EndOfStream => "it closed the status query",
+        else => "its status query failed",
+    };
 }
 
 /// Asks the backend's signaling endpoint for its status, the same query the game's server list makes.

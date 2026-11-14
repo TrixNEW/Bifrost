@@ -5,7 +5,7 @@ const Rate = @import("../proxy/Rate.zig");
 const NetherNet = @import("../net/NetherNet.zig");
 
 const Observer = @This();
-const log = std.log.scoped(.observer);
+const log = @import("../log.zig").scoped(.auth);
 
 // Login is the biggest thing we look at
 pub const limits: bedwire.Limits = .{
@@ -115,21 +115,21 @@ fn verify(self: *Observer, ctx: Context, packet: bedwire.Tap.Packet) Event {
     } };
     const identity = self.tap.authenticateLoginPacket(ctx.gpa, packet, policy) catch |err| {
         if (err == error.OutOfMemory) {
-            log.warn("login verification unavailable: {t}", .{err});
+            log.warn("Can't verify a login: {t}", .{err});
             return .auth_unavailable;
         }
-        log.info("login rejected: {t}", .{err});
+        log.info("Rejected a login: {t}", .{err});
         return .login_rejected;
     };
     const bound = if (ctx.transport_key) |key| std.mem.eql(u8, &key.toUncompressedSec1(), &identity.public_key.toUncompressedSec1()) else false;
     if (!bound) {
-        log.info("login rejected: {s} signed in with a key the connection never proved", .{identity.display_name});
+        log.info("Rejected {s}: their login is signed with a key the connection never proved, likely a replay", .{identity.display_name});
         var copy = identity;
         copy.deinit();
         return .login_rejected;
     }
     self.verified = true;
-    log.info("verified {s} (xuid {s})", .{ identity.display_name, identity.xuid });
+    log.debug("Verified {s}", .{identity.display_name});
     self.dropIdentity();
     self.identity = identity;
     return .login_verified;
@@ -143,9 +143,9 @@ pub fn dropIdentity(self: *Observer) void {
 fn giveUp(self: *Observer, ctx: Context, err: anyerror) Event {
     self.watching = false;
     if (ctx.auth == .verify and !self.verified) {
-        log.info("can't verify login: {t}", .{err});
+        log.info("Can't follow a login to verify it, so the player is turned away: {t}", .{err});
         return .auth_unavailable;
     }
-    log.debug("handshake not followable, relaying opaquely: {t}", .{err});
+    log.debug("Can't follow the handshake, relaying it opaquely: {t}", .{err});
     return .gave_up;
 }

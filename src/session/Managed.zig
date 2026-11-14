@@ -4,6 +4,7 @@ const Peer = @import("../net/Peer.zig");
 const Budget = @import("../proxy/Budget.zig");
 const PacketQueue = @import("../proxy/PacketQueue.zig");
 const Rate = @import("../proxy/Rate.zig");
+const Keys = @import("../protocol/Keys.zig");
 const Stats = @import("../proxy/Stats.zig");
 const packs = @import("../content/packs.zig");
 pub const registries = @import("../content/registries.zig");
@@ -63,7 +64,7 @@ pub const login_lifetime_s = 60;
 pub const Shared = struct {
     pool: bedwire.BufferPool,
     key: Ecdsa.KeyPair,
-    keys: *const bedwire.auth.KeySet,
+    keys: *Keys,
     batch: [][]const u8,
     scratch: []u8 = &.{},
     translated: std.heap.ArenaAllocator,
@@ -73,7 +74,7 @@ pub const Shared = struct {
     logins: ?*Rate = null,
     player_bytes_per_second: u32 = 0,
 
-    pub fn init(gpa: std.mem.Allocator, key: Ecdsa.KeyPair, keys: *const bedwire.auth.KeySet) !Shared {
+    pub fn init(gpa: std.mem.Allocator, key: Ecdsa.KeyPair, keys: *Keys) !Shared {
         // libdeflate's level 1 is about twice as fast as its level 3 with the same output on game traffic
         var pool: bedwire.BufferPool = try .init(gpa, limits, .{ .rx_slots = 1, .tx_slots = 1, .deflate_level = 1 });
         errdefer pool.deinit();
@@ -627,7 +628,9 @@ fn authenticate(self: *Managed, ends: Ends, packet: bedwire.Packet) !void {
         self.sendDisconnect(ends, "Server is busy, try again shortly") catch {};
         return error.ServerBusy;
     };
-    const policy: bedwire.TrustPolicy = .{ .oidc = .{ .now = std.Io.Clock.real.now(ends.io).toSeconds(), .keys = self.shared.keys } };
+    const keys = self.shared.keys.acquire();
+    defer self.shared.keys.release(keys);
+    const policy: bedwire.TrustPolicy = .{ .oidc = .{ .now = std.Io.Clock.real.now(ends.io).toSeconds(), .keys = &keys.login } };
     var identity = self.player.authenticateLoginPacket(self.gpa, packet, policy) catch |err| {
         if (err == error.OutOfMemory) ends.stats.bump(.auth_unavailable, 1) else ends.stats.bump(.logins_rejected, 1);
         log.info("Rejected a login from {f}: {t}", .{ self.addressText(), err });

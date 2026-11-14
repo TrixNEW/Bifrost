@@ -1,5 +1,6 @@
 const std = @import("std");
 const nethernet = @import("nethernet");
+const Keys = @import("../protocol/Keys.zig");
 
 const NetherNet = @This();
 
@@ -17,8 +18,8 @@ pub const Settings = struct {
     identity: KeyPair,
     // Managed mode dials with the key that signs its Logins, so backends trust one key for both
     dial_identity: ?KeyPair = null,
-    // Microsoft's JWKS, so clients must prove the key their Login uses
-    issuer_keys: ?[]const u8 = null,
+    // Microsoft's keys, so clients must prove the key their Login uses
+    issuer_keys: ?*Keys = null,
     connect_timeout_ms: u32 = 5_000,
     port_min: u16 = 0,
     port_max: u16 = 0,
@@ -43,7 +44,7 @@ gpa: std.mem.Allocator,
 io: std.Io,
 identity: KeyPair,
 dial_identity: KeyPair,
-issuer: ?nethernet.identity_issuer.Keys,
+issuer: ?*Keys,
 native: @FieldType(nethernet.ConnectionOptions, "native"),
 connect_timeout_ms: u32,
 token: *Token,
@@ -55,11 +56,6 @@ ice_servers: [max_ice_servers][*:0]const u8 = undefined,
 /// Keep the transport where it is afterwards, peers point into it.
 pub fn init(self: *NetherNet, gpa: std.mem.Allocator, io: std.Io, settings: Settings) !void {
     if (settings.ice_servers.len > max_ice_servers) return error.TooManyIceServers;
-    const issuer: ?nethernet.identity_issuer.Keys = if (settings.issuer_keys) |json|
-        try .init(gpa, json, nethernet.identity_issuer.minecraft_issuer, nethernet.identity_issuer.minecraft_audience)
-    else
-        null;
-    errdefer if (issuer) |keys| keys.deinit();
     const token = try gpa.create(Token);
     token.* = .{};
     self.* = .{
@@ -67,7 +63,7 @@ pub fn init(self: *NetherNet, gpa: std.mem.Allocator, io: std.Io, settings: Sett
         .io = io,
         .identity = settings.identity,
         .dial_identity = settings.dial_identity orelse settings.identity,
-        .issuer = issuer,
+        .issuer = settings.issuer_keys,
         .native = .{
             .maximum_message_size = max_message_bytes,
             // The ring touches every page as it wraps, so this is most of a connection's resident memory
@@ -97,8 +93,6 @@ pub fn init(self: *NetherNet, gpa: std.mem.Allocator, io: std.Io, settings: Sett
 }
 
 pub fn deinit(self: *NetherNet) void {
-    if (self.issuer) |keys| keys.deinit();
-    self.issuer = null;
     self.gpa.free(self.token.text);
     self.gpa.destroy(self.token);
 }
@@ -120,7 +114,10 @@ pub fn serverOptions(self: *NetherNet) nethernet.ConnectionOptions {
 
 fn verify(context: ?*anyopaque, token: []const u8) anyerror!?nethernet.sdp_identity.Key {
     const self: *NetherNet = @ptrCast(@alignCast(context.?));
-    return try self.issuer.?.verify(self.gpa, token, std.Io.Clock.real.now(self.io).toSeconds());
+    const issuer = self.issuer.?;
+    const keys = issuer.acquire();
+    defer issuer.release(keys);
+    return try keys.signaling.verify(self.gpa, token, std.Io.Clock.real.now(self.io).toSeconds());
 }
 
 // Backends see the proxy's own key, so they can pin it

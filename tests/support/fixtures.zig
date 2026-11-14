@@ -219,7 +219,10 @@ pub const Running = struct {
         try self.transport.init(allocator, io, .{
             .identity = identity(io),
             .dial_identity = bifrost.Workers.dialIdentity(io, options.auth, options.proxy_key),
-            .issuer_keys = if (options.auth == .verify) oidc_key.jwks_json else null,
+            .issuer_keys = switch (options.auth) {
+                .verify => |keys| keys,
+                .off => null,
+            },
             .connect_timeout_ms = proxy_config.connect_timeout_ms,
         });
         errdefer self.transport.deinit();

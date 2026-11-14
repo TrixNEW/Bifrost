@@ -8,8 +8,8 @@ pub const Ecdsa = bedwire.crypto.spki.Ecdsa;
 
 pub const jwks_json = oidc_key.jwks_json;
 
-pub fn keySet(allocator: std.mem.Allocator) !bedwire.auth.KeySet {
-    return bedwire.auth.KeySet.parse(allocator, oidc_key.jwks_json, .{});
+pub fn keySet(allocator: std.mem.Allocator, io: std.Io) !@import("bifrost").Keys {
+    return .parse(allocator, io, oidc_key.jwks_json);
 }
 
 pub fn rawPacket(buffer: []u8, id: u10, payload: []const u8) ![]const u8 {

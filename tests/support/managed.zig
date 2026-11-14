@@ -23,8 +23,8 @@ pub fn proxyKey(seed: u8) !Ecdsa.KeyPair {
     return Ecdsa.KeyPair.generateDeterministic(@splat(seed));
 }
 
-pub fn keySet() !bedwire.auth.KeySet {
-    return sample.keySet(gpa);
+pub fn keySet() !bifrost.Keys {
+    return sample.keySet(gpa, std.testing.io);
 }
 
 pub const rawPacket = sample.rawPacket;

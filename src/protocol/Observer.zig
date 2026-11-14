@@ -3,6 +3,7 @@ const bedwire = @import("bedwire");
 const protocol = @import("bedrock_protocol");
 const Rate = @import("../proxy/Rate.zig");
 const NetherNet = @import("../net/NetherNet.zig");
+pub const Keys = @import("Keys.zig");
 
 const Observer = @This();
 const log = @import("../log.zig").scoped(.auth);
@@ -16,7 +17,7 @@ pub const limits: bedwire.Limits = .{
 
 pub const Auth = union(enum) {
     off,
-    verify: *const bedwire.auth.KeySet,
+    verify: *Keys,
 };
 
 pub const Context = struct {
@@ -54,20 +55,6 @@ watching: bool = true,
 verified: bool = false,
 identity: ?bedwire.Identity = null,
 inbound: Rate,
-
-pub fn loadKeys(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !bedwire.auth.KeySet {
-    const json = try readKeys(gpa, io, path);
-    defer gpa.free(json);
-    return parseKeys(gpa, json);
-}
-
-pub fn readKeys(gpa: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
-    return std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(limits.max_jwks_bytes));
-}
-
-pub fn parseKeys(gpa: std.mem.Allocator, json: []const u8) !bedwire.auth.KeySet {
-    return bedwire.auth.KeySet.parse(gpa, json, limits);
-}
 
 pub fn initPool(gpa: std.mem.Allocator) !bedwire.BufferPool {
     return bedwire.BufferPool.init(gpa, limits, bedwire.PoolConfig.observer());
@@ -109,9 +96,11 @@ pub fn observe(self: *Observer, ctx: Context, direction: bedwire.TapDirection, p
 
 fn verify(self: *Observer, ctx: Context, packet: bedwire.Tap.Packet) Event {
     if (ctx.logins) |logins| if (!logins.take(ctx.now_ms, 1)) return .login_throttled;
+    const keys = ctx.auth.verify.acquire();
+    defer ctx.auth.verify.release(keys);
     const policy: bedwire.TrustPolicy = .{ .oidc = .{
         .now = std.Io.Clock.real.now(ctx.io).toSeconds(),
-        .keys = ctx.auth.verify,
+        .keys = &keys.login,
     } };
     const identity = self.tap.authenticateLoginPacket(ctx.gpa, packet, policy) catch |err| {
         if (err == error.OutOfMemory) {

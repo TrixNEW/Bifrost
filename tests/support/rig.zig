@@ -10,7 +10,7 @@ const io = std.testing.io;
 const IpAddress = std.Io.net.IpAddress;
 
 pub const Rig = struct {
-    keys: bifrost.KeySet,
+    keys: bifrost.Keys,
     a: managed.Backend,
     b: managed.Backend,
     running: Running,

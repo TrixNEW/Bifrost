@@ -231,14 +231,14 @@ fn serveProxy(init: std.process.Init, args: []const [:0]const u8) !void {
     config.health_interval_ms = try std.fmt.parseInt(u32, args[2], 10);
     config.health_timeout_ms = @min(1_000, config.health_interval_ms / 2);
     for (args[4..]) |port| try config.addBackend(null, harness.loopback(try std.fmt.parseInt(u16, port, 10)));
-    var keys = try sample.keySet(init.gpa);
+    var keys = try sample.keySet(init.gpa, init.io);
     defer keys.deinit();
     var options: bifrost.Workers.Options = .{ .identity = bifrost.NetherNet.KeyPair.generate(init.io) };
     var plugins: bifrost.Plugins = try .init(init.gpa, config.backends(), .{ .workers = config.workers });
     defer plugins.deinit();
     if (std.mem.startsWith(u8, args[3], "managed+")) {
         config.session_mode = .managed;
-        options = .{ .auth = .{ .verify = &keys }, .proxy_key = managed.proxyKey(), .plugins = &plugins, .identity = options.identity, .issuer_keys = sample.jwks_json };
+        options = .{ .auth = .{ .verify = &keys }, .proxy_key = managed.proxyKey(), .plugins = &plugins, .identity = options.identity, .verify_signaling = true };
         const setup = args[3]["managed+".len..];
         if (std.mem.eql(u8, setup, "inject-player")) {
             try bench_injection.loadTransport(&plugins, .player);

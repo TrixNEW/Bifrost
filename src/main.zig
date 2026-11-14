@@ -34,11 +34,12 @@ pub fn main(init: std.process.Init) !void {
     // Prints straight to the console, so only a console at trace turns it on
     if (log_settings.level == .trace) bifrost.enableNativeTrace();
 
-    const keys_json: ?[]u8 = if (config.keysFile()) |keys_path| bifrost.readKeys(init.gpa, init.io, keys_path) catch |err|
-        fatal("can't read auth keys {s}: {t}", .{ keys_path, err }) else null;
-    defer if (keys_json) |json| init.gpa.free(json);
-    var keys: ?bifrost.KeySet = if (keys_json) |json| bifrost.parseKeys(init.gpa, json) catch |err|
-        fatal("auth keys {s} are invalid: {t}", .{ config.keysFile().?, err }) else null;
+    const rt = try zio.Runtime.init(init.gpa, .{ .executors = .exact(config.workers) });
+    defer rt.deinit();
+
+    // Reloaded on the runtime's tasks, so they use its io
+    var keys: ?bifrost.Keys = if (config.keysFile()) |keys_path| bifrost.Keys.load(init.gpa, rt.io(), keys_path) catch |err|
+        fatal("can't load auth keys {s}: {t}", .{ keys_path, err }) else null;
     defer if (keys) |*set| set.deinit();
     const auth: bifrost.Auth = switch (config.auth) {
         .off => .off,
@@ -62,9 +63,6 @@ pub fn main(init: std.process.Init) !void {
     if (config.native_threads != 0) bifrost.setNativeThreads(config.native_threads) catch |err|
         fatal("can't use {d} NetherNet threads: {t}", .{ config.native_threads, err });
 
-    const rt = try zio.Runtime.init(init.gpa, .{ .executors = .exact(config.workers) });
-    defer rt.deinit();
-
     var plugins: bifrost.Plugins = try .init(init.gpa, config.backends(), .{
         .workers = config.workers,
         .packets = config.session_mode == .managed,
@@ -85,7 +83,7 @@ pub fn main(init: std.process.Init) !void {
         // Without plugins there are no handles to keep, events to queue or packet tables to check
         .plugins = if (plugins.loaded.items.len != 0) &plugins else null,
         .identity = identity,
-        .issuer_keys = if (config.auth == .verify) keys_json else null,
+        .verify_signaling = true,
     }) catch |err| {
         net_log.err("can't listen on {f}: {t}{s}", .{ config.bind, err, if (err == error.AddressInUse) " (is another server using the port?)" else "" });
         std.process.exit(1);

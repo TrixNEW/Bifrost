@@ -21,10 +21,7 @@ pub const Listener = @import("net/Listener.zig");
 pub const Peer = @import("net/Peer.zig");
 
 pub const Auth = Observer.Auth;
-pub const KeySet = @import("bedwire").auth.KeySet;
-pub const loadKeys = Observer.loadKeys;
-pub const readKeys = Observer.readKeys;
-pub const parseKeys = Observer.parseKeys;
+pub const Keys = Observer.Keys;
 pub const loadIdentity = @import("nethernet").identity_file.loadOrCreate;
 pub const setNativeThreads = @import("nethernet").Peer.setNativeThreadPoolSize;
 pub const enableNativeTrace = @import("nethernet").Peer.enableNativeTrace;

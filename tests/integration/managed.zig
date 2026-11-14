@@ -12,7 +12,7 @@ const current_version = bedrock.current_version;
 
 const Setup = struct {
     proxy_key: managed.Ecdsa.KeyPair,
-    keys: bifrost.KeySet,
+    keys: bifrost.Keys,
     backend: managed.Backend,
     running: Running,
 
@@ -327,7 +327,7 @@ test "session modes allocate only their own protocol state and clean up failures
     var keys = try managed.keySet();
     defer keys.deinit();
     for ([_]bool{ false, true }) |is_managed| try std.testing.checkAllAllocationFailures(gpa, struct {
-        fn run(allocator: std.mem.Allocator, key_set: *const bifrost.KeySet, use_managed: bool) !void {
+        fn run(allocator: std.mem.Allocator, key_set: *bifrost.Keys, use_managed: bool) !void {
             var proxy_config = try fixtures.config(&.{fixtures.nowhere});
             if (use_managed) proxy_config.session_mode = .managed;
             var transport: bifrost.NetherNet = undefined;

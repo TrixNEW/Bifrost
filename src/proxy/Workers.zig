@@ -35,6 +35,7 @@ next_proxy: std.atomic.Value(usize) = .init(0),
 // Connections no worker had room for
 dropped: std.atomic.Value(u64) = .init(0),
 plugins: ?*Plugins,
+auth: Observer.Auth,
 metrics: ?std.Io.net.Server = null,
 
 pub const Options = struct {
@@ -42,8 +43,8 @@ pub const Options = struct {
     proxy_key: ?proxy_key.Ecdsa.KeyPair = null,
     plugins: ?*Plugins = null,
     identity: NetherNet.KeyPair,
-    // The JWKS behind auth, so clients prove at the transport the key their Login uses
-    issuer_keys: ?[]const u8 = null,
+    // Checked at signaling too, so clients prove at the transport the key their Login uses
+    verify_signaling: bool = false,
 };
 
 /// The key backends see Bifrost dial with, null for the listener's own identity.
@@ -67,6 +68,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         .transport = undefined,
         .proxies = &.{},
         .plugins = options.plugins,
+        .auth = options.auth,
     };
     errdefer self.admission.deinit();
     var ice_servers: [Config.max_ice_servers][]const u8 = undefined;
@@ -74,7 +76,10 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
     try self.transport.init(gpa, io, .{
         .identity = options.identity,
         .dial_identity = dialIdentity(io, options.auth, options.proxy_key),
-        .issuer_keys = options.issuer_keys,
+        .issuer_keys = if (options.verify_signaling) switch (options.auth) {
+            .verify => |keys| keys,
+            .off => null,
+        } else null,
         .connect_timeout_ms = config.connect_timeout_ms,
         .port_min = config.port_min,
         .port_max = config.port_max,
@@ -183,6 +188,11 @@ pub fn run(self: *Workers) !void {
     defer health_task.cancel(self.io);
     var report_task = try self.io.concurrent(report, .{self});
     defer report_task.cancel(self.io);
+    var keys_task: ?std.Io.Future(void) = switch (self.auth) {
+        .verify => |keys| if (keys.path != null) try self.io.concurrent(Observer.Keys.watch, .{keys}) else null,
+        .off => null,
+    };
+    defer if (keys_task) |*task| task.cancel(self.io);
     var metrics_task: ?std.Io.Future(void) = if (self.metrics != null) try self.io.concurrent(serveMetrics, .{self}) else null;
     defer if (metrics_task) |*task| task.cancel(self.io);
 

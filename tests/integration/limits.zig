@@ -160,7 +160,7 @@ test "a player that stays behind too long is disconnected" {
 }
 
 const ManagedSetup = struct {
-    keys: bifrost.KeySet,
+    keys: bifrost.Keys,
     backend: managed.Backend,
     running: Running,
 

@@ -1477,7 +1477,6 @@ fn perPlayerKib(held: u64, base: u64, players: usize, scale: f64) f64 {
     return @as(f64, @floatFromInt(held -| base)) / scale / @as(f64, @floatFromInt(@max(players, 1)));
 }
 
-// Every player sends a small message at the game's 20 ticks a second, the backend echoes it
 const ScaleRun = struct {
     io: std.Io,
     players: []Player,
@@ -1503,7 +1502,6 @@ const ScaleRun = struct {
                 sleepMs(self.io, @intCast(@max(1, @min(5, (next_ns - now) / std.time.ns_per_ms))));
             }
         }
-        // Late replies still count, and still close the books on what was lost
         for (0..20) |_| for (self.players) |*player| player.pollOnce(5) catch {};
     }
 };

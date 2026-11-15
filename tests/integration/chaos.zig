@@ -35,7 +35,6 @@ test "the origin dropping before the switch leaves the player waiting for the ta
     try fixtures.waitFor(io, &rig.b.logins, 1);
     rig.a.drop_all.store(true, .release);
     try fixtures.eventually(io, &rig.a, Dropped.done);
-    // Gameplay sent while there's no backend goes nowhere instead of ending the session
     var buffer: [16]u8 = undefined;
     try rig.player.send(&.{try managed.rawPacket(&buffer, managed.game_packet_id, "lost")});
     try pumpFor(rig.player, 200);

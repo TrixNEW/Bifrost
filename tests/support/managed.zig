@@ -333,7 +333,6 @@ pub const Backend = struct {
     cache_reports: std.atomic.Value(u32) = .init(0),
     cache_supported: std.atomic.Value(bool) = .init(false),
     hold_spawn: std.atomic.Value(bool) = .init(false),
-    // Logins wait unanswered while set
     hold_login: std.atomic.Value(bool) = .init(false),
     held_login: ?*Connection = null,
     drop_all: std.atomic.Value(bool) = .init(false),

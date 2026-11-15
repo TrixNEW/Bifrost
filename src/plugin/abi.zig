@@ -342,7 +342,6 @@ pub const Command = extern struct {
     player: Player,
     name: Str,
     args: Str,
-    // 1 when the player's verified XUID is in [commands] operators
     is_operator: u32 = 0,
 };
 

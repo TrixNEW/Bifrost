@@ -31,7 +31,6 @@ pub const Options = struct {
     max_messages_per_plugin: u32 = 256,
     max_injection_bytes: u32 = 4 * 1024 * 1024,
     max_injection_bytes_per_plugin: u32 = 1024 * 1024,
-    // Verified XUIDs allowed to run commands registered above BIFROST_COMMAND_ANY
     operators: []const u64 = &.{},
 };
 
@@ -372,7 +371,7 @@ pub fn hasCommands(self: *const Plugins) bool {
     return self.commands.count() != 0;
 }
 
-/// Commands above BIFROST_COMMAND_ANY only run for operators. Others never fall through to a backend command
+/// Commands above `any` only run for operators. Others never fall through to a backend command
 /// of the same name, since the plugin's replaced it.
 pub fn runCommand(self: *const Plugins, worker: u32, io: std.Io, player: abi.Player, line: []const u8) CommandResult {
     const trimmed = std.mem.trim(u8, line, " ");

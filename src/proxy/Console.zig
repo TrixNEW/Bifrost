@@ -65,14 +65,12 @@ fn name(word: ?[]const u8, alone: bool) ParseError![]const u8 {
     return text;
 }
 
-// Everything after the player's name, spaces included
 fn reason(line: []const u8, player: []const u8) []const u8 {
     const at = std.mem.indexOf(u8, line, player).? + player.len;
     const text = std.mem.trim(u8, line[at..], " \t\r");
     return text[0..@min(text.len, max_reason_len)];
 }
 
-/// What a worker is asked to do for the players it holds.
 pub const Request = struct {
     action: enum { list, find, send, kick },
     name_storage: [max_name_len]u8 = undefined,

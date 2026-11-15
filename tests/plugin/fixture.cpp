@@ -38,7 +38,7 @@ private:
         if (event.kind == BIFROST_EVENT_PLAYER_CONNECTED) events++;
     }
 
-    // Counts what it catches, and anything it doesn't must stop at the wrapper instead of reaching the host
+    // Rethrows, so the wrapper has to stop it before the host
     void echo(const bifrost_command &, std::string_view args) {
         try {
             if (args.empty()) throw std::invalid_argument("no args");

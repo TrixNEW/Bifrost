@@ -2,9 +2,7 @@ const std = @import("std");
 const bedwire = @import("bedwire");
 const nethernet = @import("nethernet");
 
-/// Microsoft's signing keys, for Logins and for the identity players prove at signaling. Microsoft rotates them, so
-/// a changed keys file or a fresh download replaces the whole set while logins already holding the old one finish
-/// with it.
+/// Microsoft's signing keys for Logins and signaling. A reload swaps the whole set; logins holding the old one finish with it.
 const Keys = @This();
 const log = @import("../log.zig").scoped(.auth);
 
@@ -26,7 +24,6 @@ pub const Snapshot = struct {
 gpa: std.mem.Allocator,
 io: std.Io,
 path: ?[]const u8 = null,
-// How often to download Microsoft's current keys, 0 to only follow the file
 refresh_s: u64 = 0,
 mutex: std.Io.Mutex = .init,
 current: *Snapshot,

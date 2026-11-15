@@ -49,7 +49,6 @@ pub const Options = struct {
     identity: NetherNet.KeyPair,
     // Checked at signaling too, so clients prove at the transport the key their Login uses
     verify_signaling: bool = false,
-    // Reads operator commands from stdin
     console: bool = false,
 };
 
@@ -433,7 +432,6 @@ fn command(self: *Workers, line: []const u8) error{Canceled}!void {
     }
 }
 
-// Every worker answers for its own players; the last one to finish wakes the console
 fn ask(self: *Workers, request: Console.Request) error{Canceled}!u32 {
     self.console_reply.reset(@intCast(self.proxies.len));
     for (self.proxies) |proxy| if (!proxy.ask(request)) self.console_reply.finish(self.io, 0);

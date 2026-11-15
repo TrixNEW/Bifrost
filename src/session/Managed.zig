@@ -74,7 +74,6 @@ pub const Shared = struct {
     budget: ?*Budget = null,
     logins: ?*Rate = null,
     player_bytes_per_second: u32 = 0,
-    // Where a backend's Transfer packets may send players: a listed backend becomes a proxy transfer
     backends: []const Backend = &.{},
     external_transfers: bool = false,
 
@@ -139,11 +138,9 @@ chunk_radius: ?struct { radius: i32, max: u8 } = null,
 cache_supported: ?bool = null,
 plugin_player: abi.Player = .{},
 commands_sent: bool = false,
-// A backend asked to send the player to this one, which the link turns into a proxy transfer
 redirect: ?Backend.Id = null,
-// A transfer is on its way and hasn't committed, so the old backend's kick mustn't end the session
 moving: bool = false,
-// The old backend left during that transfer, so until the commit the player's packets have nowhere to go
+// The old backend left before the commit, so until then the player's packets are dropped
 orphaned: bool = false,
 // Player packets sent before the backend is ready
 early: PacketQueue,
@@ -716,7 +713,6 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame:
     };
 }
 
-/// Begins a transfer's client sync once the handoff has sent its dimension changes.
 pub fn startSync(self: *Managed, handoff_acks: u8, target_dimension: i32) void {
     self.syncing = true;
     self.dimension_acks = 0;

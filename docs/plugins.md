@@ -119,6 +119,13 @@ library target and call `bifrost_embed_manifest(MyPlugin plugin.toml)`. Include 
 linker tricks and exports the C ABI getter. Manifest changes trigger CMake reconfiguration.
 The Zig build uses the same header template and also tracks manifest content changes.
 
+[`include/bifrost.hpp`](../include/bifrost.hpp) is an optional header-only layer over the C ABI. A plugin is a
+class built from `bifrost::Host` and `bifrost_plugin&`, deleted at shutdown, and `BIFROST_PLUGIN(MyPlugin)`
+exports the entry point. `host.on<&MyPlugin::onJoin>(kind, this)`, `on_packet` and `command` route callbacks to
+member functions, and an exception a handler lets escape stops in the wrapper instead of crossing into the host;
+a packet handler that throws passes the packet on. A constructor that throws `bifrost::Failure` fails the load with
+that status. [`tests/plugin/fixture.cpp`](../tests/plugin/fixture.cpp) is a small plugin written this way.
+
 MSVC, Clang and GCC can use this interface. Keep classes, containers, allocators and exceptions inside
 the binary. All exports and callbacks use the existing C ABI, with `extern "C"` and `noexcept` in C++.
 Catch exceptions inside callbacks where recovery is possible. ChatGuard uses PascalCase classes

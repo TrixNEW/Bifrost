@@ -365,7 +365,6 @@ fn rejectTransfer(self: *Proxy, request: TransferRequest, err: anyerror) void {
 }
 
 pub fn stop(self: *Proxy) void {
-    self.env.events.proxyStopping();
     self.stop_requested.store(true, .release);
     self.scheduler.wake.set(self.io);
 }
@@ -373,6 +372,8 @@ pub fn stop(self: *Proxy) void {
 pub fn run(self: *Proxy) void {
     self.env.events.proxyStarted();
     while (!self.stop_requested.load(.acquire)) self.turn();
+    // Here rather than in stop, so plugins only ever hear from worker tasks
+    self.env.events.proxyStopping();
     self.drain();
     self.closeAll();
 }

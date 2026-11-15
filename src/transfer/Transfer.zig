@@ -293,14 +293,15 @@ fn captureWorld(self: *Transfer, start: protocol.packets.start_game.Packet) !voi
     try world.emit(.{ .set_commands_enabled = .{ .commands_enabled = settings.commands_enabled } });
     if (settings.rule_data.len != 0) try world.emit(.{ .game_rules_changed = .{ .rule_data = settings.rule_data } });
     const origin: protocol.Vec3f = .{ .x = 0, .y = 0, .z = 0 };
-    if (settings.rain_level > 0) try world.emit(.{ .level_event = .{ .event_id = ClientState.start_rain, .position = origin, .data = weather(settings.rain_level) } });
-    if (settings.lightning_level > 0) try world.emit(.{ .level_event = .{ .event_id = ClientState.start_thunder, .position = origin, .data = weather(settings.lightning_level) } });
+    // The first backend's weather came in its StartGame, which ClientState never saw, so clear skies are sent too
+    try world.emit(.{ .level_event = .{ .event_id = if (settings.rain_level > 0) ClientState.start_rain else ClientState.stop_rain, .position = origin, .data = weather(settings.rain_level) } });
+    try world.emit(.{ .level_event = .{ .event_id = if (settings.lightning_level > 0) ClientState.start_thunder else ClientState.stop_thunder, .position = origin, .data = weather(settings.lightning_level) } });
 }
 
 // Vanilla scales weather strength to 0..65535
 fn weather(level: f32) i32 {
     if (!std.math.isFinite(level)) return 0;
-    return @intFromFloat(@min(level, 1) * 65535);
+    return @intFromFloat(std.math.clamp(level, 0, 1) * 65535);
 }
 
 fn endsRegistries(kind: ?protocol.PacketKind) bool {

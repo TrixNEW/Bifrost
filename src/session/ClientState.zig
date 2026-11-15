@@ -15,8 +15,8 @@ const max_objectives = 64;
 const max_objective_bytes = 4096;
 const max_effects = 256;
 const hud_elements = 13;
-const stop_rain = 3003;
-const stop_thunder = 3004;
+pub const stop_rain = 3003;
+pub const stop_thunder = 3004;
 pub const start_rain = 3001;
 pub const start_thunder = 3002;
 

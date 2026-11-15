@@ -19,6 +19,7 @@ const registries = @import("../content/registries.zig");
 pub const State = @import("State.zig");
 const Queue = @import("Queue.zig");
 const Handoff = @import("Handoff.zig");
+const ClientState = @import("../session/ClientState.zig");
 
 const Transfer = @This();
 const log = @import("../log.zig").scoped(.transfer);
@@ -82,6 +83,8 @@ target_spawn: ?Handoff.Target = null,
 target_ids: self_id.Ids = .{},
 target_modes: struct { player: i32, world: i32 } = .{ .player = 0, .world = 0 },
 handoff: ?Handoff = null,
+// What the target's StartGame set for the world, sent on its own since that StartGame never reaches the client
+world: Managed.Outbox,
 managed: *Managed,
 mismatch: ?content.Mismatch = null,
 
@@ -100,8 +103,10 @@ pub fn create(host: Host, target: Backend.Id, address: std.Io.net.IpAddress, epo
             .budget = settings.budget,
         },
         .content_policy = settings.content_policy,
+        .world = .init(host.gpa),
         .managed = host.managed,
     };
+    errdefer self.world.deinit();
     errdefer self.upstream.deinit();
     self.dial_task = try host.io.concurrent(Dial.run, .{ &self.dial, host.transport, address, host.notify });
     errdefer self.cancelTasks(host.io);
@@ -119,6 +124,7 @@ pub fn destroy(self: *Transfer, gpa: std.mem.Allocator, io: std.Io) void {
     if (self.source) |*source| source.destroy();
     self.upstream.deinit();
     self.queue.deinit(gpa);
+    self.world.deinit();
     gpa.destroy(self);
 }
 
@@ -237,6 +243,7 @@ fn receive(self: *Transfer, host: Host, frame: []const u8) !void {
                 self.target_spawn = .{ .dimension = start.settings.spawn_settings.dimension, .position = finite(start.position) };
                 self.target_ids = .{ .runtime = start.runtime_id, .unique = start.entity_id };
                 self.target_modes = .{ .player = @backingInt(start.game_type), .world = @backingInt(start.settings.game_type) };
+                try self.captureWorld(start);
                 self.seen.started = true;
             }
             continue;
@@ -273,6 +280,27 @@ fn receive(self: *Transfer, host: Host, frame: []const u8) !void {
             .max_chunk_radius = radius.max,
         } })});
     }
+}
+
+fn captureWorld(self: *Transfer, start: protocol.packets.start_game.Packet) !void {
+    const settings = start.settings;
+    const world = &self.world;
+    world.bytes.clearRetainingCapacity();
+    world.lengths.clearRetainingCapacity();
+    try world.emit(.{ .set_time = .{ .time = @bitCast(@as(u32, @truncate(start.level_current_time))) } });
+    const difficulty = @backingInt(settings.game_difficulty);
+    if (difficulty >= 0 and difficulty <= 3) try world.emit(.{ .set_difficulty = .{ .difficulty = @intCast(difficulty) } });
+    try world.emit(.{ .set_commands_enabled = .{ .commands_enabled = settings.commands_enabled } });
+    if (settings.rule_data.len != 0) try world.emit(.{ .game_rules_changed = .{ .rule_data = settings.rule_data } });
+    const origin: protocol.Vec3f = .{ .x = 0, .y = 0, .z = 0 };
+    if (settings.rain_level > 0) try world.emit(.{ .level_event = .{ .event_id = ClientState.start_rain, .position = origin, .data = weather(settings.rain_level) } });
+    if (settings.lightning_level > 0) try world.emit(.{ .level_event = .{ .event_id = ClientState.start_thunder, .position = origin, .data = weather(settings.lightning_level) } });
+}
+
+// Vanilla scales weather strength to 0..65535
+fn weather(level: f32) i32 {
+    if (!std.math.isFinite(level)) return 0;
+    return @intFromFloat(@min(level, 1) * 65535);
 }
 
 fn endsRegistries(kind: ?protocol.PacketKind) bool {
@@ -363,6 +391,8 @@ fn commit(self: *Transfer, host: Host) !void {
 fn release(self: *Transfer, host: Host) !void {
     const managed = host.managed;
     managed.hold = null;
+    var world: [8][]const u8 = undefined;
+    _ = try managed.deliver(host.ends(), self.world.slices(0, &world));
     var slices: [max_held_packets][]const u8 = undefined;
     const skipped = try managed.deliver(host.ends(), self.queue.slices(&slices));
     if (skipped != 0) log.trace("Transfer {d} held back {d} world packets for client sync", .{ self.state.epoch, skipped });

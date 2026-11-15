@@ -115,6 +115,18 @@ test "a backend's Transfer anywhere else is dropped" {
     try rig.expectOn(&rig.a);
 }
 
+test "the target's world settings reach the client, since its StartGame never does" {
+    var rig: Rig = undefined;
+    try rig.start(.{});
+    defer rig.deinit();
+    try std.testing.expectEqual(@as(usize, 0), rig.player.received(.set_time));
+    try moveTo(&rig, 1, 1);
+    for ([_]protocol.PacketKind{ .set_time, .set_commands_enabled }) |kind| {
+        try std.testing.expectEqual(@as(usize, 1), rig.player.received(kind));
+    }
+    try std.testing.expect(rig.player.lastIndex(.set_time).? > rig.player.lastIndex(.change_dimension).?);
+}
+
 test "moving between dimensions needs no detour either way" {
     var rig: Rig = undefined;
     try rig.start(.{ .b_content = .{ .dimension = nether, .position = far } });

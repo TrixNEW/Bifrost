@@ -38,9 +38,10 @@ What's open as of 2.0.0-rc.14. Details live in the linked docs.
 
   Each player also costs about 380 KiB of resident memory, and past two workers the shared libdatachannel
   threads (`[nethernet] threads`) cap throughput, not Bifrost's workers. See `tests/bench/baseline.md`.
-- **Transfers don't replay the target's world settings.** The target's StartGame is swallowed, so its time,
-  difficulty, game rules and weather only reach the client when the target sends them again. Volume entities and
-  NPC dialogue the old backend opened aren't tracked, so they aren't cleared.
+- **Transfers rebuild only part of the target's StartGame.** Its time, difficulty, commands flag, game rules and
+  weather are sent as their own packets; other world settings in it (world spawn, default game mode, experiments)
+  only reach the client if the target sends them again. Volume entities and NPC dialogue the old backend opened
+  aren't tracked, so they aren't cleared.
 - **A backend that kicks or drops a player before a transfer commits** is no longer fatal: its Disconnect is held
   back and the player waits on the target, but what they send in that gap is dropped, and if the transfer then
   fails they're disconnected with "Lost connection to the server" rather than the backend's own reason.

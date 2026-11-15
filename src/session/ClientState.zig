@@ -17,8 +17,8 @@ const max_effects = 256;
 const hud_elements = 13;
 const stop_rain = 3003;
 const stop_thunder = 3004;
-const start_rain = 3001;
-const start_thunder = 3002;
+pub const start_rain = 3001;
+pub const start_thunder = 3002;
 
 entities: std.ArrayList(i64) = .empty,
 players: std.ArrayList([16]u8) = .empty,

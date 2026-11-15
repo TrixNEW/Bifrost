@@ -25,18 +25,41 @@ fn waitForChanges(rig: *Rig, at_least: usize) !void {
     try rig.pumpUntil(Changes{ .player = rig.player, .at_least = at_least }, Changes.reached);
 }
 
-test "the origin dropping before the switch ends the session and frees the target" {
+test "the origin dropping before the switch leaves the player waiting for the target" {
     var rig: Rig = undefined;
-    try rig.start(.{ .b = .silent_login });
+    try rig.start(.{});
+    defer rig.deinit();
+    rig.b.hold_login.store(true, .release);
+
+    try rig.transfer(1);
+    try fixtures.waitFor(io, &rig.b.logins, 1);
+    rig.a.drop_all.store(true, .release);
+    try fixtures.eventually(io, &rig.a, Dropped.done);
+    // Gameplay sent while there's no backend goes nowhere instead of ending the session
+    var buffer: [16]u8 = undefined;
+    try rig.player.send(&.{try managed.rawPacket(&buffer, managed.game_packet_id, "lost")});
+    try pumpFor(rig.player, 200);
+    rig.b.hold_login.store(false, .release);
+    try rig.waitFor(.transfers_committed, 1);
+    try rig.expectOn(&rig.b);
+}
+
+test "the origin dropping before a switch that then fails ends the session and frees the target" {
+    var rig: Rig = undefined;
+    try rig.start(.{ .b = .silent_login, .phase_timeout_ms = 1_000 });
     defer rig.deinit();
 
     try rig.transfer(1);
     try fixtures.waitFor(io, &rig.b.logins, 1);
     rig.a.drop_all.store(true, .release);
-    try rig.running.waitForStat(.transfers_failed_before_commit, 1);
+    try rig.running.waitForStat(.transfers_timed_out, 1);
     try rig.player.awaitClosed();
     try fixtures.waitFor(io, &rig.b.disconnects, 1);
     try std.testing.expectEqual(@as(u64, 0), rig.stats().transfers_committed);
+}
+
+fn pumpFor(player: *Player, ms: i64) !void {
+    _ = try player.countGamePackets("", ms);
 }
 
 test "the origin dropping after the switch doesn't disturb the player" {

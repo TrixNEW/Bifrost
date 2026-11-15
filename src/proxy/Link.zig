@@ -239,7 +239,7 @@ pub fn forwardToBackend(self: *Link, message: NetherNet.Message) !void {
         return;
     }
     if (self.managed) |managed| {
-        if (self.backend == null and self.dial_task == null) return error.BackendClosed;
+        if (self.backend == null and self.dial_task == null and !managed.orphaned) return error.BackendClosed;
         managed.fromPlayer(self.ends(), payload) catch |err| {
             if (managed.identity == null and managed.player_phase == .login) self.authentication = if (err == error.OutOfMemory or err == error.ServerBusy) .unavailable else .rejected;
             return err;
@@ -433,7 +433,15 @@ pub fn service(self: *Link) error{Canceled}!void {
     };
     if (self.transfer) |transfer| if (self.session) |*session| switch (try transfer.service(self.transferHost(session))) {
         .running => {},
-        .finished, .rolled_back, .abandoned => self.endTransfer(null),
+        .finished, .abandoned => self.endTransfer(null),
+        .rolled_back => {
+            self.endTransfer(null);
+            // The old backend left while the transfer was trying, so there's nothing to roll back to
+            if (self.backend == null and self.managed.?.orphaned) {
+                self.ending("the old backend left and the transfer failed", null);
+                _ = self.disconnect("Lost connection to the server");
+            }
+        },
         .disconnect => {
             self.endTransfer(null);
             self.closeSession();
@@ -495,6 +503,7 @@ fn pumpBackend(self: *Link) void {
             break;
         }
         const message = (backend.next() catch |err| {
+            if (self.orphan(err)) return;
             self.ending("backend closed the connection", err);
             return self.fail(err);
         }) orelse {
@@ -732,6 +741,7 @@ fn startTransfer(self: *Link, requested: Backend.Id) !void {
     const epoch = self.env.next_epoch.?;
     epoch.* +%= 1;
     self.transfer = try Transfer.create(self.transferHost(session), target, self.env.router.get(target).address, epoch.*, self.env.transfer);
+    managed.moving = true;
     if (self.env.transfers) |count| count.* += 1;
     self.transfer_started_ns = Metrics.nowNs(self.env.io);
     self.env.scheduler.schedule(self);
@@ -756,6 +766,7 @@ fn endTransfer(self: *Link, event: ?Transfer.State.Event) void {
     const transfer = self.transfer orelse return;
     const source = self.backend_id;
     self.transfer = null;
+    if (self.managed) |managed| managed.moving = false;
     if (self.env.transfers) |count| count.* -= 1;
     if (event) |cause| transfer.end(self.env.io, self.env.stats, cause);
     if (transfer.outcome == .committed) if (self.env.timings) |timings| timings.transfer.record(Metrics.sinceUs(self.env.io, self.transfer_started_ns));
@@ -839,6 +850,17 @@ fn flushPending(self: *Link) !void {
         self.env.stats.bump(.bytes_to_backend, packet.len);
         self.env.stats.bump(.messages_to_backend, 1);
     }
+}
+
+// The old backend closing mid-transfer leaves the player waiting on the target instead of ending the session
+fn orphan(self: *Link, err: anyerror) bool {
+    const transfer = self.transfer orelse return false;
+    const managed = self.managed orelse return false;
+    if (transfer.state.phase.committed()) return false;
+    transfer_log.info("{s} closed while {f} was moving to {s}; the transfer carries on ({t})", .{ self.env.router.get(self.backend_id).name(), self.who(), self.env.router.get(transfer.target).name(), err });
+    self.dropBackend();
+    managed.orphaned = true;
+    return true;
 }
 
 fn cancelDial(self: *Link) void {

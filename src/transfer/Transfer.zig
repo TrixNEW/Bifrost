@@ -338,6 +338,8 @@ fn commit(self: *Transfer, host: Host) !void {
     self.source = host.backend.*;
     host.backend.* = self.client;
     self.client = null;
+    managed.moving = false;
+    managed.orphaned = false;
     self.upstream = managed.swapUpstream(self.upstream);
     self.publish(host);
     var outbox: Managed.Outbox = .init(host.gpa);

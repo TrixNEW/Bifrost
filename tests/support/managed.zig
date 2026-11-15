@@ -333,6 +333,9 @@ pub const Backend = struct {
     cache_reports: std.atomic.Value(u32) = .init(0),
     cache_supported: std.atomic.Value(bool) = .init(false),
     hold_spawn: std.atomic.Value(bool) = .init(false),
+    // Logins wait unanswered while set
+    hold_login: std.atomic.Value(bool) = .init(false),
+    held_login: ?*Connection = null,
     drop_all: std.atomic.Value(bool) = .init(false),
     held: ?*Connection = null,
     refuse: bool = false,
@@ -469,6 +472,10 @@ pub const Backend = struct {
                 self.held = null;
                 self.sendWorld(connection, .spawn_only) catch {};
             };
+            if (self.held_login) |connection| if (!self.hold_login.load(.acquire)) {
+                self.held_login = null;
+                self.admit(connection) catch {};
+            };
             if (self.drop_all.swap(false, .acq_rel)) {
                 var i = self.connections.items.len;
                 while (i > 0) {
@@ -578,6 +585,28 @@ pub const Backend = struct {
         try self.handle(connection, client, frame);
     }
 
+    fn admit(self: *Backend, connection: *Connection) !void {
+        const session = &connection.session;
+        const carrier = connection.carrier;
+        var buffer: [64]u8 = undefined;
+        // NetherNet has no encryption handshake, the login is done
+        try session.advance(.resource_packs);
+        _ = self.admitted.fetchAdd(1, .release);
+        const status = try typedPacket(&buffer, .{ .play_status = .{ .status = .loginsuccess } });
+        if (self.mode == .silent_stack) return sendFrame(session, carrier, &.{status});
+        var stack: [128]u8 = undefined;
+        const packs = try sample.packStack(&stack, self.content);
+        switch (self.mode) {
+            .early_start => {
+                try session.advance(.waiting_for_start_game);
+                var start_buffer: [1024]u8 = undefined;
+                return sendFrame(session, carrier, &.{ status, try sample.startGame(&start_buffer, self.content) });
+            },
+            .double_stack => return sendFrame(session, carrier, &.{ status, packs, packs }),
+            else => try sendFrame(session, carrier, &.{ status, packs }),
+        }
+    }
+
     fn handle(self: *Backend, connection: *Connection, carrier: *net.Server.Client, frame: []const u8) !void {
         const session = &connection.session;
         var packets = try session.ingest(frame);
@@ -640,22 +669,11 @@ pub const Backend = struct {
                     try sendFrame(session, carrier, &.{try typedPacket(&buffer, .{ .play_status = .{ .status = .loginfailed_serverold } })});
                     return;
                 }
-                // NetherNet has no encryption handshake, the login is done
-                try session.advance(.resource_packs);
-                _ = self.admitted.fetchAdd(1, .release);
-                const status = try typedPacket(&buffer, .{ .play_status = .{ .status = .loginsuccess } });
-                if (self.mode == .silent_stack) return sendFrame(session, carrier, &.{status});
-                var stack: [128]u8 = undefined;
-                const packs = try sample.packStack(&stack, self.content);
-                switch (self.mode) {
-                    .early_start => {
-                        try session.advance(.waiting_for_start_game);
-                        var start_buffer: [1024]u8 = undefined;
-                        return sendFrame(session, carrier, &.{ status, try sample.startGame(&start_buffer, self.content) });
-                    },
-                    .double_stack => return sendFrame(session, carrier, &.{ status, packs, packs }),
-                    else => try sendFrame(session, carrier, &.{ status, packs }),
+                if (self.hold_login.load(.acquire)) {
+                    self.held_login = connection;
+                    return;
                 }
+                try self.admit(connection);
             },
             .resource_pack_client_response => {
                 if (self.mode == .kick_packs) return carrier.close();

@@ -141,6 +141,10 @@ plugin_player: abi.Player = .{},
 commands_sent: bool = false,
 // A backend asked to send the player to this one, which the link turns into a proxy transfer
 redirect: ?Backend.Id = null,
+// A transfer is on its way and hasn't committed, so the old backend's kick mustn't end the session
+moving: bool = false,
+// The old backend left during that transfer, so until the commit the player's packets have nowhere to go
+orphaned: bool = false,
 // Player packets sent before the backend is ready
 early: PacketQueue,
 inbound: Rate = .unlimited,
@@ -367,7 +371,8 @@ const Batch = struct {
         const packets = self.managed.shared.batch[0..self.count];
         self.count = 0;
         if (self.to_player) return self.managed.sendToPlayer(self.ends, packets);
-        try self.managed.upstream.send(self.managed.upstreamContext(self.ends, self.ends.backend orelse return error.BackendClosed), packets);
+        const backend = self.ends.backend orelse return if (self.managed.orphaned) {} else error.BackendClosed;
+        try self.managed.upstream.send(self.managed.upstreamContext(self.ends, backend), packets);
     }
 
     fn discard(self: *Batch) void {
@@ -756,6 +761,11 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
             }
         }
         if (kind == .transfer and try self.redirects(ends, packet.bytes)) continue;
+        // The target is nearly there, so a backend shutting down doesn't take the player with it
+        if (kind == .disconnect and self.moving) {
+            session_log.debug("Holding back the old backend's kick of {s} while they move", .{self.displayName()});
+            continue;
+        }
         if (registries.isRegistry(kind)) {
             if (self.transferred) {
                 try self.checkRegistry(packet.bytes);

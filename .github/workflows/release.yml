@@ -34,8 +34,8 @@ jobs:
           fi
           echo "TAG=v$version" >> "$GITHUB_ENV"
       - run: zig fmt --check build.zig build.zig.zon src tests examples
-      # libstdc++ goes into libdatachannel, so the archive doesn't depend on the host's
-      - run: LDFLAGS="-static-libstdc++ -static-libgcc" sh tools/setup-native.sh
+      # libstdc++ goes into libdatachannel, hidden so plugins keep their own, and the archive doesn't depend on the host's
+      - run: LDFLAGS="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL" sh tools/setup-native.sh
       - run: zig build test bench-test
       - run: zig build test bench-test -Doptimize=ReleaseSafe
       - run: zig build -Doptimize=ReleaseSafe
@@ -49,7 +49,7 @@ jobs:
           fi
           for image in debian:bookworm-slim ubuntu:22.04; do
             echo "::group::$image"
-            docker run --rm -v "$PWD/dist/bifrost-$TAG-linux-x86_64.tar.gz:/bifrost.tar.gz:ro" -e VERSION="${TAG#v}" "$image" sh -ec '
+            timeout 120 docker run --rm --init -v "$PWD/dist/bifrost-$TAG-linux-x86_64.tar.gz:/bifrost.tar.gz:ro" -e VERSION="${TAG#v}" "$image" sh -ec '
               tar -xzf /bifrost.tar.gz -C /opt
               cd /opt/bifrost-*
               ./run.sh > run.log 2>&1 &
@@ -65,7 +65,9 @@ jobs:
               grep -qF "Starting Bifrost $VERSION" run.log
               grep -q "Bifrost ready" run.log
               grep -q "Stopped after" run.log
-              test -f licenses/libdatachannel/LICENSE && test -f licenses/mbedtls/LICENSE && test -f licenses/zio/LICENSE'
+              for pkg in libdatachannel libjuice usrsctp plog mbedtls nethernet bedwire bedrock_protocol nbt toml zio libdeflate; do
+                ls licenses/$pkg/* >/dev/null
+              done'
             echo "::endgroup::"
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

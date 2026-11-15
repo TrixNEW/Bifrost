@@ -38,7 +38,6 @@ for dir in zig-pkg/*/; do
         owner=$(dirname "$file")
         name=$pkg
         [ "$owner" = "${dir%/}" ] || name=$(basename "$owner")
-        [ -n "$(find "${dir%/}" -maxdepth 3 -name libdeflate.h -path "$owner/*")" ] && name=libdeflate
         mkdir -p "$out/licenses/$name"
         cp "$file" "$out/licenses/$name/"
     done

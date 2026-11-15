@@ -139,7 +139,10 @@ cache_supported: ?bool = null,
 plugin_player: abi.Player = .{},
 commands_sent: bool = false,
 redirect: ?Backend.Id = null,
+redirect_warned: bool = false,
 moving: bool = false,
+// The old backend's kick, held back while the player moves or is about to
+held_kick: ?[]u8 = null,
 // The old backend left before the commit, so until then the player's packets are dropped
 orphaned: bool = false,
 // Player packets sent before the backend is ready
@@ -184,6 +187,7 @@ pub fn destroy(self: *Managed) void {
     self.client_state.deinit(self.gpa);
     self.gameplay.deinit(self.gpa);
     self.early.deinit(self.gpa);
+    self.dropKick();
     self.gpa.destroy(self);
 }
 
@@ -244,10 +248,7 @@ pub fn deliver(self: *Managed, ends: Ends, packets: []const []const u8) !usize {
             skipped += 1;
             continue;
         }
-        if (kind == .transfer and try self.redirects(ends, packet)) {
-            skipped += 1;
-            continue;
-        }
+        if (kind == .transfer and self.redirects(ends, packet)) continue;
         var bytes = packet;
         // The new backend's command list replaces the client's, plugin commands included
         if (kind == .available_commands) if (self.pluginCommands()) |plugins| {
@@ -756,10 +757,11 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
                 continue;
             }
         }
-        if (kind == .transfer and try self.redirects(ends, packet.bytes)) continue;
-        // The target is nearly there, so a backend shutting down doesn't take the player with it
-        if (kind == .disconnect and self.moving) {
+        if (kind == .transfer and self.redirects(ends, packet.bytes)) continue;
+        // A backend shutting down, or sending the player on, doesn't take them with it before the move is decided
+        if (kind == .disconnect and (self.moving or (self.redirect != null and self.inGame()))) {
             session_log.debug("Holding back the old backend's kick of {s} while they move", .{self.displayName()});
+            if (self.held_kick == null) self.held_kick = try self.gpa.dupe(u8, packet.bytes);
             continue;
         }
         if (registries.isRegistry(kind)) {
@@ -794,17 +796,37 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
 
 // A Transfer to a listed backend moves the player inside the proxy. Anywhere else would hand a server the
 // player doesn't know about a fresh Microsoft-signed login, so it's dropped unless allowed.
-fn redirects(self: *Managed, ends: Ends, packet: []const u8) !bool {
-    const transfer = try typed(try decode(packet), .transfer);
+fn redirects(self: *Managed, ends: Ends, packet: []const u8) bool {
+    const envelope = decode(packet) catch null;
+    const transfer = (if (envelope) |value| typed(value, .transfer) catch null else null) orelse {
+        ends.stats.bump(.redirects_blocked, 1);
+        session_log.debug("Dropped a malformed Transfer for {s}", .{self.displayName()});
+        return true;
+    };
     if (findBackend(self.shared.backends, transfer.server_address, transfer.server_port)) |id| {
-        ends.stats.bump(.backend_redirects, 1);
         if (self.redirect == null) self.redirect = id;
         return true;
     }
     if (self.shared.external_transfers) return false;
     ends.stats.bump(.redirects_blocked, 1);
-    session_log.warn("Dropped a backend's transfer of {s} to {s}:{d}, which isn't a [[backend]] ([transfer] external = true allows it)", .{ self.displayName(), transfer.server_address, transfer.server_port });
+    const format = "Dropped a backend's transfer of {s} to {s}:{d}, which isn't a [[backend]] ([transfer] external = true allows it)";
+    const args = .{ self.displayName(), transfer.server_address, transfer.server_port };
+    // A backend retrying would flood the log
+    if (self.redirect_warned) session_log.debug(format, args) else session_log.warn(format, args);
+    self.redirect_warned = true;
     return true;
+}
+
+/// Sends the kick held back during a move that didn't happen.
+pub fn releaseKick(self: *Managed, ends: Ends) !void {
+    const kick = self.held_kick orelse return;
+    defer self.dropKick();
+    try self.sendToPlayer(ends, &.{kick});
+}
+
+pub fn dropKick(self: *Managed) void {
+    if (self.held_kick) |kick| self.gpa.free(kick);
+    self.held_kick = null;
 }
 
 fn findBackend(backends: []const Backend, host: []const u8, port: u16) ?Backend.Id {

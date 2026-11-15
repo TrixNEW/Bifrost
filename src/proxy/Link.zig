@@ -441,7 +441,12 @@ pub fn service(self: *Link) error{Canceled}!void {
             // The old backend left while the transfer was trying, so there's nothing to roll back to
             if (self.backend == null and self.managed.?.orphaned) {
                 self.ending("the old backend left and the transfer failed", null);
-                _ = self.disconnect("Lost connection to the server");
+                if (self.managed.?.held_kick == null) {
+                    _ = self.disconnect("Lost connection to the server");
+                } else {
+                    self.managed.?.releaseKick(self.ends()) catch {};
+                    self.closeSession();
+                }
             }
         },
         .disconnect => {
@@ -451,6 +456,7 @@ pub fn service(self: *Link) error{Canceled}!void {
     };
     self.pumpPlayer();
     self.pumpBackend();
+    self.followRedirect();
     // Syncing the client can finish a transfer, and only the top of a turn ends one
     if (self.transfer) |transfer| if (transfer.result != .running) self.env.scheduler.schedule(self);
 }
@@ -505,6 +511,8 @@ fn pumpBackend(self: *Link) void {
             break;
         }
         const message = (backend.next() catch |err| {
+            // A backend that sends the player on and then closes is common, so the move starts before the close counts
+            self.followRedirect();
             if (self.orphan(err)) return;
             self.ending("backend closed the connection", err);
             return self.fail(err);
@@ -520,13 +528,26 @@ fn pumpBackend(self: *Link) void {
         return self.fail(err);
     }
     if (self.transfer) |transfer| if (self.session) |*session| transfer.syncClient(self.transferHost(session)) catch |err| return self.fail(err);
-    if (self.managed) |managed| if (managed.redirect) |target| {
-        managed.redirect = null;
-        self.requestTransfer(target) catch |err| transfer_log.debug("{f}'s backend asked to move them to {s}, which can't happen now: {t}", .{ self.who(), self.env.router.get(target).name(), err });
-    };
     if (paused and self.stalled()) return self.pause();
     self.backlogged_since_ms = null;
     if (!drained) self.env.scheduler.schedule(self);
+}
+
+// A backend's Transfer to another backend waits for any transfer underway and for the player to be in game. A kick
+// held back for it reaches the player once no move is coming.
+fn followRedirect(self: *Link) void {
+    const managed = self.managed orelse return;
+    if (self.transfer != null) return;
+    const session = if (self.session) |*session| session else return;
+    if (!session.open()) return;
+    if (managed.redirect) |target| if (managed.inGame()) {
+        managed.redirect = null;
+        if (self.requestTransfer(target)) {
+            self.env.stats.bump(.backend_redirects, 1);
+            return;
+        } else |err| transfer_log.debug("{f}'s backend asked to move them to {s}, which can't happen now: {t}", .{ self.who(), self.env.router.get(target).name(), err });
+    };
+    managed.releaseKick(self.ends()) catch |err| self.fail(err);
 }
 
 // Keeps reading a closing peer, or its sends stall and our own close can't finish

@@ -47,8 +47,8 @@ What's open as of 2.0.0-rc.14. Details live in the linked docs.
   only reach the client if the target sends them again. Volume entities and NPC dialogue the old backend opened
   aren't tracked, so they aren't cleared.
 - **A backend that kicks or drops a player before a transfer commits** is no longer fatal: its Disconnect is held
-  back and the player waits on the target, but what they send in that gap is dropped, and if the transfer then
-  fails they're disconnected with "Lost connection to the server" rather than the backend's own reason.
+  back and the player waits on the target, but what they send in that gap is dropped. If the transfer then fails,
+  the held kick reaches them, or "Lost connection to the server" when the backend just closed.
 - **Signaling checks a token's P-384 signature before Microsoft's RSA one**, with no rate limit of its own, so a
   stream of garbage offers costs CPU on the workers before it's refused. The per-address connection and handshake
   caps bound it, the cost hasn't been measured.

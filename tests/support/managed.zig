@@ -567,6 +567,7 @@ pub const Backend = struct {
         const connection: *Connection = @ptrCast(@alignCast(client.user orelse return));
         client.user = null;
         if (self.held == connection) self.held = null;
+        if (self.held_login == connection) self.held_login = null;
         for (self.connections.items, 0..) |item, i| if (item == connection) {
             _ = self.connections.swapRemove(i);
             break;

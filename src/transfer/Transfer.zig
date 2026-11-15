@@ -368,6 +368,9 @@ fn commit(self: *Transfer, host: Host) !void {
     self.client = null;
     managed.moving = false;
     managed.orphaned = false;
+    // What the old backend asked for no longer applies
+    managed.redirect = null;
+    managed.dropKick();
     self.upstream = managed.swapUpstream(self.upstream);
     self.publish(host);
     var outbox: Managed.Outbox = .init(host.gpa);

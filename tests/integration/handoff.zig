@@ -102,6 +102,55 @@ test "a backend's Transfer to another listed backend becomes a proxy transfer" {
     try std.testing.expectEqual(@as(usize, 0), rig.player.received(.transfer));
 }
 
+fn kickPacket(buffer: []u8) ![]const u8 {
+    return managed.typedPacket(buffer, .{ .disconnect = .{ .reason = .disconnected, .messages = .{ .messages = .{ .message = "moving you", .filtered_message = "" } } } });
+}
+
+fn kicked(player: *Player) bool {
+    return player.received(.disconnect) != 0;
+}
+
+test "a backend that sends the player on, kicks them and closes doesn't take them with it" {
+    var rig: Rig = undefined;
+    try rig.start(.{});
+    defer rig.deinit();
+    var transfer: [128]u8 = undefined;
+    var kick: [128]u8 = undefined;
+    const packets = [_][]const u8{ try backendTransfer(&transfer, "127.0.0.1", rig.b.address().getPort()), try kickPacket(&kick) };
+    // One batch asks the backend to send both and then close, so the proxy can see all of it in one turn
+    var buffer: [512]u8 = undefined;
+    var writer = protocol.Writer.init(&buffer);
+    try writer.writeVarU32(managed.game_packet_id);
+    try writer.writeRaw("relay");
+    for (packets) |packet| {
+        try writer.writeRaw(&std.mem.toBytes(std.mem.nativeToLittle(u16, @intCast(packet.len))));
+        try writer.writeRaw(packet);
+    }
+    var close: [16]u8 = undefined;
+    try rig.player.send(&.{ writer.written(), try managed.rawPacket(&close, managed.game_packet_id, "kick") });
+    var marker: [256]u8 = undefined;
+    while (!std.mem.eql(u8, try rig.player.nextGamePacket(&marker), "relayed")) {}
+    try rig.waitFor(.transfers_committed, 1);
+    try rig.expectOn(&rig.b);
+    try std.testing.expectEqual(@as(usize, 0), rig.player.received(.disconnect));
+    try std.testing.expectEqual(@as(u64, 1), rig.stats().backend_redirects);
+}
+
+test "a kick held back during a move that fails still reaches the player" {
+    var rig: Rig = undefined;
+    try rig.start(.{ .phase_timeout_ms = 1_000 });
+    defer rig.deinit();
+    // The target never answers the login, so the move times out
+    rig.b.hold_login.store(true, .release);
+    try rig.transfer(1);
+    var kick: [128]u8 = undefined;
+    try rig.player.relay(&.{try kickPacket(&kick)});
+    try pumpFor(rig.player, 100);
+    try std.testing.expectEqual(@as(usize, 0), rig.player.received(.disconnect));
+    try rig.waitFor(.transfers_timed_out, 1);
+    try rig.pumpUntil(rig.player, kicked);
+}
+
 test "a backend's Transfer anywhere else is dropped" {
     var rig: Rig = undefined;
     try rig.start(.{});

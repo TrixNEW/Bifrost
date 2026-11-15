@@ -1424,3 +1424,69 @@ had its first three setups of every group 25 to 35% low, passthrough included, s
 The move changed which library decodes a packet and nothing about when one is decoded, and the numbers agree.
 
 Tests: the full suite and bench-test pass in Debug, ReleaseSafe and ReleaseFast on Windows. A real client, Linux and TSan were not run for this version.
+
+## Readiness pass, 2.0.0-rc.14
+
+Linux (WSL2 Ubuntu 24.04, 12 threads, 7 GiB), ReleaseFast. The rc.14 driver ran the rc.13 proxy (`045c98c`) and the
+rc.14 proxy (`1fd553c`) through `--proxy-exe`, alternating, so both see the same driver. Nothing in this pass targets
+the relay path; the point was to check that pinned scheduling, routing claims and the signaling changes cost nothing.
+
+`-- relay --quick`, round trips/s, two alternating rounds, rc.13 / rc.14:
+
+| payload | load | round 1 | round 2 |
+|---|---|---|---|
+| 64 B | 1x1 | 1232 / 1202 | 1350 / 1380 |
+| 64 B | 8x32 | 14180 / 12344 | 14334 / 15110 |
+| 512 B | 1x1 | 1224 / 1152 | 1354 / 1368 |
+| 512 B | 8x32 | 13528 / 10742 | 14314 / 15202 |
+
+Round 1 favours rc.13 and round 2 rc.14 by about the same margin, so the difference is run-to-run noise.
+
+`-- scale` (new): one worker, passthrough, players join one by one, sit idle 5 s, then each sends 64 B every 50 ms
+for 5 s and the backend echoes it. Proxy CPU is a share of one core, RTT in ms. rc.14, first run:
+
+| players | RSS | RSS/player | idle CPU | active CPU | messages/s | RTT p50 | RTT p99 | lost |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 12.0 MiB | - | 0.0% | 0.0% | 0 | - | - | 0 |
+| 1 | 17.0 MiB | - | 0.4% | 2.0% | 20 | 5.30 | 5.43 | 0 |
+| 50 | 32.3 MiB | 420 KiB | 0.9% | 17.3% | 735 | 5.34 | 5.74 | 0 |
+| 100 | 47.8 MiB | 367 KiB | 1.1% | 33.3% | 1399 | 5.53 | 11.10 | 0 |
+| 250 | 93.5 MiB | 335 KiB | 3.3% | 63.5% | 3371 | 10.46 | 15.83 | 0 |
+| 500 | 170.0 MiB | 324 KiB | 6.7% | 110.1% | 5290 | 21.10 | 36.40 | 0 |
+| 1000 | 323.6 MiB | 319 KiB | 17.6% | 145.2% | 6723 | 474.45 | 1257.36 | 0 |
+
+Three runs of each build at 250, 500 and 1000 players, rc.13 / rc.14:
+
+| players | active CPU | messages/s | RTT p50 |
+|---|---|---|---|
+| 250 | 67.8, 72.8, 69.9 / 63.5, 65.9, 68.3 | ~3360 both | 10.5 to 10.6 both |
+| 500 | 119.8, 113.8, 121.8 / 110.1, 106.2, 108.6 | ~5280 both | 20.6 to 25.9 / 20.8 to 21.1 |
+| 1000 | 120.9, 141.0, 151.3 / 145.2, 141.6, 142.2 | 7070 to 7503 / 6723 to 7392 | 40.4, 176.8, 268.0 / 474.5, 174.1, 149.1 |
+
+- One worker tops out between 500 and 1000 players at 20 messages a second each: the 1000-player rows ask for
+  20,000 echoes a second and get about 7,400, with latency set by queueing. That's the same for both builds; the
+  first rc.13 run at 1000 was an outlier. Above about 500 such players, raise `[server] workers`.
+- Idle CPU grows with players because every connection keeps its ICE consent, DTLS and SCTP timers running.
+- rc.14 starts 3.6 MiB larger: the signaling listener now keeps 128 HTTP workers instead of 32, so idle sockets
+  can't hold every one of them. Per-player RSS is unchanged at about 320 KiB.
+- The driver's timer granularity on Windows makes this scenario meaningless there (RTT floors at about 15 ms and the
+  send rate can't be held), so it's only recorded on Linux.
+
+`-- connections`, rc.14:
+
+| players | wave | joins/s | join p50 ms | join p99 ms | leaves/s |
+|---|---|---|---|---|---|
+| 100 | 1 / 2 | 123 / 135 | 513.9 / 460.7 | 577.1 / 521.3 | 4792 / 4586 |
+| 500 | 1 / 2 | 108 / 131 | 543.4 / 469.3 | 1028.9 / 606.8 | 4142 / 3321 |
+| 1000 | 1 / 2 | 113 / 104 | 548.1 / 606.2 | 773.0 / 866.6 | 3337 / 3704 |
+| 2000 | 1 / 2 | 101 / 110 | 631.5 / 570.7 | 850.7 / 784.5 | 3736 / 1001 |
+
+RSS per held player is 328 KiB at 2000 players. After two waves of 2000 left, 64,804 B of heap above the fresh proxy
+remained; RSS stays near its peak because the allocator keeps freed pages. Three churn rounds left the heap at the
+same 2,787,468 B each time, so nothing accumulates across join and leave cycles.
+
+Tests: the suite and bench-test pass on Windows in Debug (360 of 362, 2 skipped) and ReleaseSafe (362 of 362), and
+on Linux in ReleaseSafe (361 of 361) and Debug. One Linux Debug run hung in a single test while another suite ran
+on the same machine; the test wasn't identified, and two later Linux Debug runs didn't hang. Another Linux Debug run
+failed "a player skips several dead backends" under the same load; every dial in that test, the live one included,
+gets 500 ms, which a Debug P-384 handshake under load can exceed. A real client and TSan were not run.

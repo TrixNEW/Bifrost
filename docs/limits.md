@@ -26,8 +26,8 @@ transport notices a dead peer.
 | NetherNet handshakes in flight | whole proxy | `[nethernet] max_negotiations` | 32 |
 | the same, from one IP | whole proxy | `[nethernet] max_negotiations_per_ip` | 4 |
 | one HTTP signaling request | per request | fixed | 13 s, 3 s to send it, 64 KiB offer |
-| open HTTP signaling connections from one IP | whole proxy | fixed | 4 |
-| HTTP signaling workers | whole proxy | 4 × `max_negotiations`, at least 64 | 128 |
+| open HTTP signaling connections from one IP | whole proxy | 4, or `max_negotiations_per_ip` if higher | 4 |
+| HTTP signaling workers | whole proxy | 4 × `max_negotiations`, 64 to 512 | 128 |
 | finished handshakes waiting for a worker | per worker | fixed | 64 |
 
 A handshake over these limits gets HTTP 503 before any WebRTC state is created. ICE, DTLS and SCTP must finish
@@ -36,8 +36,8 @@ far more workers than one address may hold connections. Players behind one NAT s
 
 Players are expected to reach the signaling port directly. Forwarding headers such as `X-Forwarded-For` are not
 trusted, so behind another HTTP proxy or CDN every player shares that proxy's address and the per-IP limits apply to
-all of them together. `max_negotiations_per_ip` can be raised for that, but the per-IP connection cap is fixed, so
-such a setup is not supported.
+all of them together. Raising `max_negotiations_per_ip` raises the per-IP connection cap with it, but such a setup
+is not supported.
 
 `[server] max_players_per_ip` counts the address ICE settled on, so players behind one NAT or relayed through
 one TURN server share it, and IPv6 players share their /64. A player whose address ICE can't report only counts against `max_players`.

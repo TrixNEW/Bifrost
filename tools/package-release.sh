@@ -29,14 +29,18 @@ for pair in libdatachannel:libdatachannel libjuice:libdatachannel/deps/libjuice 
 done
 
 # Zig packages compiled into the binary; tracy is only fetched for profiling builds
+# Packages can vendor others (bedwire carries libdeflate), and those are named after their own directory
 for dir in zig-pkg/*/; do
     [ -d "$dir/profiler" ] && continue
     pkg=$(basename "$dir")
     pkg=${pkg%%-[0-9]*}
-    [ -n "$(find "$dir" -maxdepth 2 -name libdeflate.h)" ] && pkg=libdeflate
-    find "$dir" -maxdepth 2 -type f \( -name 'LICENSE*' -o -name 'COPYING*' -o -name 'NOTICE*' \) | while read -r file; do
-        mkdir -p "$out/licenses/$pkg"
-        cp "$file" "$out/licenses/$pkg/"
+    find "${dir%/}" -maxdepth 3 -type f \( -name 'LICENSE*' -o -name 'COPYING*' -o -name 'NOTICE*' \) | while read -r file; do
+        owner=$(dirname "$file")
+        name=$pkg
+        [ "$owner" = "${dir%/}" ] || name=$(basename "$owner")
+        [ -n "$(find "${dir%/}" -maxdepth 3 -name libdeflate.h -path "$owner/*")" ] && name=libdeflate
+        mkdir -p "$out/licenses/$name"
+        cp "$file" "$out/licenses/$name/"
     done
 done
 zio=$(sed -n 's/.*lalinsky\/zio#\([0-9a-f]\{40\}\).*/\1/p' build.zig.zon)

@@ -94,7 +94,12 @@ pub fn logFn(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comp
         .info => .info,
         .debug => .debug,
     };
-    if (enabled(ours)) write(ours, scope, format, args);
+    if (answers(ours, scope) or enabled(ours)) write(ours, scope, format, args);
+}
+
+// The console scope answers the operator's commands, which show whatever the console's level
+fn answers(comptime level: Level, comptime scope: @EnumLiteral()) bool {
+    return scope == .console and @backingInt(level) <= @backingInt(Level.info);
 }
 
 /// Opens the log file, if any, before taking the new settings, so a bad path keeps the old ones.
@@ -164,7 +169,7 @@ fn updateThreshold() void {
 
 fn write(comptime level: Level, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void {
     var buffer: [max_message_len]u8 = undefined;
-    emit(level, comptime category(scope), render(&buffer, format, args));
+    emit(level, comptime category(scope), render(&buffer, format, args), comptime answers(level, scope));
 }
 
 fn category(comptime scope: @EnumLiteral()) []const u8 {
@@ -198,7 +203,7 @@ fn render(buffer: []u8, comptime format: []const u8, args: anytype) []u8 {
     return text;
 }
 
-fn emit(level: Level, name: []const u8, text: []const u8) void {
+fn emit(level: Level, name: []const u8, text: []const u8, always: bool) void {
     const io = std.Options.debug_io;
     const prev = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(prev);
@@ -212,7 +217,7 @@ fn emit(level: Level, name: []const u8, text: []const u8) void {
         .always => terminal.mode = .escape_codes,
         .never => terminal.mode = .no_color,
     }
-    if (@backingInt(level) <= @backingInt(state.console)) printConsole(terminal, level, name, text, if (state.timestamps) time else null) catch {};
+    if (always or @backingInt(level) <= @backingInt(state.console)) printConsole(terminal, level, name, text, if (state.timestamps) time else null) catch {};
     if (state.file != null and @backingInt(level) <= @backingInt(state.file_level)) writeFile(io, terminal, level, name, text, time);
 }
 

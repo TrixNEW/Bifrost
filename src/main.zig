@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const zio = @import("zio");
 const bifrost = @import("bifrost");
 
@@ -19,6 +20,7 @@ pub const std_options: std.Options = .{
 const config_path = "config/bifrost.toml";
 
 pub fn main(init: std.process.Init) !void {
+    const console = stdinOpen();
     const started = std.Io.Clock.awake.now(init.io);
     bifrost.tuneAllocator();
     log.info("Starting Bifrost {s}", .{bifrost.version});
@@ -91,7 +93,7 @@ pub fn main(init: std.process.Init) !void {
         .plugins = if (plugins.loaded.items.len != 0) &plugins else null,
         .identity = identity,
         .verify_signaling = true,
-        .console = true,
+        .console = console,
     }) catch |err| {
         net_log.err("can't listen on {f}: {t}{s}", .{ config.bind, err, if (err == error.AddressInUse) " (is another server using the port?)" else "" });
         std.process.exit(1);
@@ -113,6 +115,12 @@ pub fn main(init: std.process.Init) !void {
     try workers.run();
     const totals = workers.totals();
     log.info("Stopped after {f}, {d} connection{s} served", .{ bifrost.log.elapsed(sinceMs(init.io, started)), totals.sessions_accepted, plural(totals.sessions_accepted) });
+}
+
+// Started with stdin closed, the next file or socket opened takes fd 0, and the console would read it
+fn stdinOpen() bool {
+    if (builtin.os.tag == .windows) return true;
+    return std.c.fcntl(0, std.c.F.GETFD) != -1;
 }
 
 fn loadConfig(init: std.process.Init) bifrost.Config {

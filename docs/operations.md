@@ -9,14 +9,15 @@ Output goes to the log under the `Console` category.
 |---|---|
 | `status` | players online, and for each backend whether it's up, draining, how many players this proxy has there and how many it reports |
 | `players` (or `list`) | every player with their backend, address and time online |
-| `find <player>` | the same for one player, by display name in any case |
+| `find <player>` | the same for one player, by display name in any case; names may contain spaces |
 | `send <player> <backend>` | transfers a player (managed sessions) |
-| `kick <player> [reason]` | disconnects a player, with the reason when managed |
+| `kick <player> [reason]` | disconnects a player, with the reason when managed; quote a name with spaces |
 | `drain <backend>` / `undrain <backend>` | stops or resumes sending new players and transfers there; players already there stay |
-| `log <level>` | changes the console level until restart; the file keeps `file_level` |
+| `log <level>` | changes the console level until restart; the file keeps `file_level`, and NetherNet's own traces need `trace` at startup |
 | `stop` | tells every player the proxy is shutting down and exits, like SIGINT or SIGTERM |
 
-When standard input is closed (systemd's default, `docker run` without `-i`) the console is simply off. A Bifrost
+Replies show whatever the console level. When standard input is closed (systemd's default, `docker run` without `-i`)
+the console is simply off. A Bifrost
 started in the background of a shell ignores `SIGTTIN`, so reading the terminal can't stop it.
 
 There is no network admin API. Anything that needs remote control should be a plugin, or a process that writes to

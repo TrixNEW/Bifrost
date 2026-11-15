@@ -435,6 +435,7 @@ fn command(self: *Workers, line: []const u8) error{Canceled}!void {
         .stop => {
             console_log.info("Stopping", .{});
             self.stop();
+            return error.Canceled;
         },
     }
 }

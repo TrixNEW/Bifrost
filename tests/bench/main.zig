@@ -233,7 +233,11 @@ fn serveProxy(init: std.process.Init, args: []const [:0]const u8) !void {
     config.health_timeout_ms = @min(1_000, config.health_interval_ms / 2);
     for (args[4..]) |port| try config.addBackend(null, harness.loopback(try std.fmt.parseInt(u16, port, 10)));
     config.joinAll();
-    var keys: bifrost.Keys = try .parse(init.gpa, init.io, sample.jwks_json);
+    // Same runtime setup as the real binary
+    const rt = try zio.Runtime.init(init.gpa, .{ .executors = .exact(config.workers) });
+    defer rt.deinit();
+    const io = rt.io();
+    var keys: bifrost.Keys = try .parse(init.gpa, io, sample.jwks_json);
     defer keys.deinit();
     var options: bifrost.Workers.Options = .{ .identity = bifrost.NetherNet.KeyPair.generate(init.io) };
     var plugins: bifrost.Plugins = try .init(init.gpa, config.backends(), .{ .workers = config.workers });
@@ -251,10 +255,6 @@ fn serveProxy(init: std.process.Init, args: []const [:0]const u8) !void {
         }
     }
 
-    // Same runtime setup as the real binary
-    const rt = try zio.Runtime.init(init.gpa, .{ .executors = .exact(config.workers) });
-    defer rt.deinit();
-    const io = rt.io();
     var heap: harness.CountingAllocator = .{ .backing = init.gpa };
     const workers = try bifrost.Workers.create(heap.allocator(), io, config, options);
     defer workers.destroy();

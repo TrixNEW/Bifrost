@@ -46,11 +46,11 @@ comptime {
 }
 
 const usage =
-    \\usage: bench [relay|fairness|managed|deflate|plugins|players|gameplay|packet-dispatch|callback-latency|injection|injection-transport|injection-workers|decode|ids|tasks|handles|links|queues|handshake|connections|workers|backends ...] [--quick] [--driver-threads N] [--proxy-exe PATH]
+    \\usage: bench [relay|fairness|scale|managed|deflate|plugins|players|gameplay|packet-dispatch|callback-latency|injection|injection-transport|injection-workers|decode|ids|tasks|handles|links|queues|handshake|connections|workers|backends ...] [--quick] [--driver-threads N] [--proxy-exe PATH]
     \\
 ;
 
-const all_scenarios = [_][]const u8{ "relay", "fairness", "managed", "deflate", "plugins", "players", "gameplay", "decode", "injection", "ids", "tasks", "handles", "links", "queues", "handshake", "connections", "workers", "backends" };
+const all_scenarios = [_][]const u8{ "relay", "fairness", "scale", "managed", "deflate", "plugins", "players", "gameplay", "decode", "injection", "ids", "tasks", "handles", "links", "queues", "handshake", "connections", "workers", "backends" };
 const login_token_bytes = 16 * 1024;
 
 pub fn main(init: std.process.Init) !void {
@@ -174,6 +174,7 @@ pub fn main(init: std.process.Init) !void {
         }
         if (std.mem.eql(u8, name, "handshake")) try handshakeScenario(&env);
         if (std.mem.eql(u8, name, "connections")) try connectionsScenario(&env);
+        if (std.mem.eql(u8, name, "scale")) try scaleScenario(&env);
         if (std.mem.eql(u8, name, "workers")) try workersScenario(&env);
         if (std.mem.eql(u8, name, "backends")) try backendsScenario(&env);
         try env.out.flush();
@@ -1474,6 +1475,111 @@ fn wave(env: *Env, proxy: *Proxy, count: usize) !Wave {
 
 fn perPlayerKib(held: u64, base: u64, players: usize, scale: f64) f64 {
     return @as(f64, @floatFromInt(held -| base)) / scale / @as(f64, @floatFromInt(@max(players, 1)));
+}
+
+// Every player sends a small message at the game's 20 ticks a second, the backend echoes it
+const ScaleRun = struct {
+    io: std.Io,
+    players: []Player,
+    payload: [64]u8 = @splat(0x5a),
+    recorder: Recorder = .{},
+    sent: u64 = 0,
+    until_ns: u64,
+
+    fn run(self: *ScaleRun) void {
+        var next_ns = nowNs(self.io);
+        while (nowNs(self.io) < self.until_ns) {
+            for (self.players) |*player| {
+                self.payload[0] = 0xfe;
+                harness.stamp(&self.payload, self.io);
+                player.send(&self.payload) catch continue;
+                self.sent += 1;
+            }
+            next_ns += 50 * std.time.ns_per_ms;
+            while (true) {
+                for (self.players) |*player| player.pollOnce(0) catch {};
+                const now = nowNs(self.io);
+                if (now >= next_ns) break;
+                sleepMs(self.io, @intCast(@max(1, @min(5, (next_ns - now) / std.time.ns_per_ms))));
+            }
+        }
+        // Late replies still count, and still close the books on what was lost
+        for (0..20) |_| for (self.players) |*player| player.pollOnce(5) catch {};
+    }
+};
+
+fn scaleScenario(env: *Env) !void {
+    const backends: Backends = try .start(env, 1);
+    defer backends.deinit(env);
+    const counts: []const usize = if (env.quick) &.{ 0, 1, 50, 100 } else &.{ 0, 1, 50, 100, 250, 500, 1000 };
+    try env.out.print(
+        \\
+        \\## Players at scale
+        \\
+        \\A fresh proxy per row, 1 worker, passthrough. Players join one by one, then sit idle for 5 s, then each sends a
+        \\64 B message every 50 ms for 5 s, as a client sends PlayerAuthInput every tick, and the backend echoes it.
+        \\CPU is the proxy's, as a share of one core. RTT is player to backend and back, in ms.
+        \\
+        \\| players | RSS | RSS/player | idle CPU | active CPU | messages/s | RTT p50 | RTT p99 | lost |
+        \\|---|---|---|---|---|---|---|---|---|
+        \\
+    , .{});
+    try env.out.flush();
+    for (counts) |count| {
+        var proxy: Proxy = undefined;
+        try env.startProxy(&proxy, .{ .backends = backends.ports });
+        defer proxy.stop();
+        const base = try proxy.stats();
+        const players = try joinedPlayers(env, proxy.address(), count);
+        defer leave(env, players);
+        const held = try proxy.stats();
+
+        const idle_started = nowNs(env.io);
+        sleepMs(env.io, 5_000);
+        const idled = try proxy.stats();
+        const idle_cpu = @as(f64, @floatFromInt(idled.cpu_us - held.cpu_us)) * 100_000 / @as(f64, @floatFromInt(nowNs(env.io) - idle_started));
+
+        const groups = @max(1, @min(env.cpus, count / 25 + 1));
+        const runs = try env.gpa.alloc(ScaleRun, groups);
+        defer {
+            for (runs) |*run| run.recorder.deinit(env.gpa);
+            env.gpa.free(runs);
+        }
+        const until_ns = nowNs(env.io) + 5_000 * std.time.ns_per_ms;
+        for (runs, 0..) |*run, i| {
+            run.* = .{ .io = env.io, .players = players[count * i / groups .. count * (i + 1) / groups], .until_ns = until_ns };
+            run.recorder.latencies_ns = try .initCapacity(env.gpa, run.players.len * 110);
+            for (run.players) |*player| player.recorder = &run.recorder;
+        }
+        const active_started = nowNs(env.io);
+        var group: std.Io.Group = .init;
+        for (runs) |*run| group.concurrent(env.io, ScaleRun.run, .{run}) catch ScaleRun.run(run);
+        try group.await(env.io);
+        const active = try proxy.stats();
+        const active_ns = nowNs(env.io) - active_started;
+        for (players) |*player| player.recorder = null;
+
+        var sent: u64 = 0;
+        var latencies: std.ArrayList(u64) = .empty;
+        defer latencies.deinit(env.gpa);
+        for (runs) |*run| {
+            sent += run.sent;
+            try latencies.appendSlice(env.gpa, run.recorder.latencies_ns.items);
+        }
+        const rtt: Percentiles = .of(latencies.items);
+        try env.out.print("| {d} | {d:.1} MiB | {d:.0} KiB | {d:.1}% | {d:.1}% | {d:.0} | {d:.2} | {d:.2} | {d} |\n", .{
+            count,
+            @as(f64, @floatFromInt(held.rss_kb)) / 1024,
+            perPlayerKib(held.rss_kb, base.rss_kb, count, 1),
+            idle_cpu,
+            @as(f64, @floatFromInt(active.cpu_us - idled.cpu_us)) * 100_000 / @as(f64, @floatFromInt(active_ns)),
+            @as(f64, @floatFromInt(sent)) * std.time.ns_per_s / @as(f64, @floatFromInt(active_ns)),
+            rtt.p50 / 1000,
+            rtt.p99 / 1000,
+            sent -| latencies.items.len,
+        });
+        try env.out.flush();
+    }
 }
 
 fn connectionsScenario(env: *Env) !void {

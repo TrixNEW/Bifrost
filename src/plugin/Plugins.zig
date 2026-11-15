@@ -794,6 +794,8 @@ fn registerCommand(loaded: *Loaded, info: *const abi.CommandInfo) abi.Status {
     if (owner.commands.contains(lower)) return .invalid_argument;
     for (owner.pending_commands.items) |*other| if (std.mem.eql(u8, other.name[0..other.len], lower)) return .invalid_argument;
     owner.pending_commands.append(owner.gpa, item) catch return .failed;
+    if (info.permission != .any and owner.options.operators.len == 0)
+        log.warn("{s}'s /{s} is for operators, and [commands] operators lists none, so nobody can run it", .{ loaded.label(), lower });
     return .ok;
 }
 

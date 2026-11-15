@@ -128,9 +128,11 @@ const Loaded = struct {
     fn admitLog(self: *Loaded, second: u32) ?u64 {
         var old = self.log_window.load(.monotonic);
         while (true) {
-            const same = old >> 32 == second;
+            const window: u32 = @intCast(old >> 32);
+            // A thread that read the clock just before another counts in the newer second
+            const same = second <= window;
             const lines: u64 = if (same) old & std.math.maxInt(u32) else 0;
-            const next = (@as(u64, second) << 32) | @min(lines + 1, std.math.maxInt(u32));
+            const next = (@as(u64, @max(second, window)) << 32) | @min(lines + 1, std.math.maxInt(u32));
             if (self.log_window.cmpxchgWeak(old, next, .monotonic, .monotonic)) |actual| {
                 old = actual;
                 continue;

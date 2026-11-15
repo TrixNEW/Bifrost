@@ -408,7 +408,7 @@ Existing connection, authentication, backend selection and transfer callback ord
 combat, interaction, dimension or respawn events are added: packet subscriptions remain the source for those
 notifications and avoid extra decoding or disabling the existing relay fast path. No network anomaly event is
 invented from unsupported measurements. A plugin logging more than 200 lines a second has the rest dropped until the
-next second, and the drop count is logged.
+next second, and the drop count is logged with its next line after that.
 
 ## Known limitations
 

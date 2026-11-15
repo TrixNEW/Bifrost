@@ -451,9 +451,9 @@ typedef struct bifrost_host {
     bifrost_status (*client_data)(void *context, bifrost_player player, bifrost_str *out) BIFROST_NOEXCEPT;
     bifrost_status (*set_client_data)(void *context, bifrost_player player, bifrost_str json) BIFROST_NOEXCEPT;
     uint32_t revision;
-    /* Revision 8, any thread: an online player by display name in any case, or by XUID. NOT_FOUND when nobody matches */
+    /* Revision 8, any thread: a connected player by XUID, else by display name ignoring ASCII case (the newest on a tie). NOT_FOUND when nobody matches */
     bifrost_status (*find_player)(void *context, bifrost_str name_or_xuid, bifrost_player *out) BIFROST_NOEXCEPT;
-    /* Revision 8, any thread: copies up to capacity online players and sets total to how many there are */
+    /* Revision 8, any thread: copies up to capacity player handles, closing and unverified ones too, and sets total to how many there are */
     bifrost_status (*list_players)(void *context, bifrost_player *out, size_t capacity, size_t *total) BIFROST_NOEXCEPT;
 } bifrost_host;
 

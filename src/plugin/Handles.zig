@@ -137,13 +137,16 @@ pub fn lookup(self: *Handles, name_or_xuid: []const u8) ?abi.Player {
     if (name_or_xuid.len == 0) return null;
     self.enter();
     defer self.leave();
+    // Names can repeat, say a player rejoining before their old session ends, so the newest wins
+    var newest: ?u32 = null;
     for (self.slots.items, 0..) |*slot, index| {
-        if (slot.route == null) continue;
-        const xuid = slot.info.xuid[0..slot.info.xuid_len];
-        if (std.ascii.eqlIgnoreCase(slot.name[0..slot.name_len], name_or_xuid) or std.mem.eql(u8, xuid, name_or_xuid))
-            return handle(@intCast(index), slot.generation);
+        if (slot.route == null or slot.info.state.connection != .connected) continue;
+        if (std.mem.eql(u8, slot.info.xuid[0..slot.info.xuid_len], name_or_xuid)) return handle(@intCast(index), slot.generation);
+        if (!std.ascii.eqlIgnoreCase(slot.name[0..slot.name_len], name_or_xuid)) continue;
+        if (newest == null or slot.connected_ns >= self.slots.items[newest.?].connected_ns) newest = @intCast(index);
     }
-    return null;
+    const index = newest orelse return null;
+    return handle(index, self.slots.items[index].generation);
 }
 
 /// Copies as many online players as fit and returns how many there are.
@@ -228,6 +231,13 @@ test "players are found by name or XUID and listed while online" {
     try std.testing.expectEqual(@as(?abi.Player, steve), handles.lookup("2535400000000001"));
     try std.testing.expectEqual(@as(?abi.Player, alex), handles.lookup("ALEX"));
     try std.testing.expectEqual(@as(?abi.Player, null), handles.lookup(""));
+    const rejoined = try handles.acquire(gpa, to);
+    handles.setName(rejoined, "alex");
+    handles.slots.items[2].connected_ns = 1;
+    try std.testing.expectEqual(@as(?abi.Player, rejoined), handles.lookup("Alex"));
+    _ = handles.setState(rejoined, .{ .connection = .closing });
+    try std.testing.expectEqual(@as(?abi.Player, alex), handles.lookup("Alex"));
+    handles.release(rejoined);
 
     var out: [1]abi.Player = undefined;
     try std.testing.expectEqual(@as(usize, 2), handles.list(&out));

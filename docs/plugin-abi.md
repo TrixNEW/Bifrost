@@ -257,10 +257,12 @@ including an identity field too large for its fixed buffer. Identity is copied o
 `authentication` is `AUTHENTICATED`. Authentication may instead be pending, disabled, unavailable or rejected.
 An empty name never means an authenticated anonymous player. `player_name` retains its original truncation rules.
 
-Revision 8 adds `find_player(name_or_xuid, out)` and `list_players(out, capacity, total)`, both safe from any thread
-and holding the same short lock. `find_player` matches a display name in any case or an exact XUID and returns
-`NOT_FOUND` when nobody online matches. `list_players` copies up to `capacity` handles of players online now and
-sets `total` to how many there are; pass `NULL` and 0 to only count. Handles may go stale right after either call.
+Revision 8 adds `find_player(name_or_xuid, out)` and `list_players(out, capacity, total)`, both safe from any thread;
+each scans the handle table under its lock. `find_player` matches an exact XUID, or else a display name ignoring ASCII
+case, the newest session when names repeat, skips sessions that are closing and returns `NOT_FOUND` when nobody
+matches. `list_players` copies up to `capacity` handles of every session the proxy holds, including ones still
+logging in or closing, and sets `total` to how many there are; pass `NULL` and 0 to only count. Handles may go stale
+right after either call.
 
 `state` reports the connection, session mode, connection phase, current backend and transfer state. `NO_BACKEND`
 means no backend has been selected. During the initial dial the selected backend is reported even before it connects.

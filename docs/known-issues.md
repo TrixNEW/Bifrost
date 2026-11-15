@@ -13,7 +13,8 @@ What's open as of 2.0.0-rc.14. Details live in the linked docs.
   outdated, and raw packets from plugins have to use the 1.26.60 layouts.
 - **No AddressSanitizer run of the native libraries.** The full suite passes on Windows and Linux in Debug,
   ReleaseSafe and ReleaseFast, and under ThreadSanitizer on Linux (`tools/tsan.sh`), which only instruments the
-  Zig code.
+  Zig code. Building libdatachannel with ASan (`NETHERNET_SANITIZER_FLAGS`) and preloading the runtime into the
+  Zig tests doesn't work: ASan aborts every test that ends a Zig thread, failing to unmap the stack Zig gave it.
 - **`udp_mux` hasn't been tried with vanilla clients** (`config/bifrost.toml`), though the Pterodactyl egg turns it on.
 - **Other backends:** gophertunnel servers and vanilla BDS have no way to trust a proxy, and neither was tested.
   See [Backend support](backends.md).

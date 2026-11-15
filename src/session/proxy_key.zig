@@ -4,17 +4,43 @@ const bedwire = @import("bedwire");
 pub const Ecdsa = bedwire.crypto.spki.Ecdsa;
 
 const hex_len = Ecdsa.SecretKey.encoded_length * 2;
-const owner_only: std.Io.File.Permissions = if (@hasDecl(std.Io.File.Permissions, "fromMode")) .fromMode(0o600) else .default_file;
+const has_modes = @hasDecl(std.Io.File.Permissions, "fromMode");
+const owner_only: std.Io.File.Permissions = if (has_modes) .fromMode(0o600) else .default_file;
 
 // Creates the key if it's missing
 pub fn load(io: std.Io, path: []const u8) !Ecdsa.KeyPair {
-    var buffer: [hex_len + 16]u8 = undefined;
-    defer std.crypto.secureZero(u8, &buffer);
-    const text = std.Io.Dir.cwd().readFile(io, path, &buffer) catch |err| switch (err) {
-        error.FileNotFound => return create(io, path),
-        else => return err,
-    };
-    return parse(std.mem.trim(u8, text, " \t\r\n"));
+    for (0..8) |_| {
+        var buffer: [hex_len + 16]u8 = undefined;
+        defer std.crypto.secureZero(u8, &buffer);
+        if (std.Io.Dir.cwd().readFile(io, path, &buffer)) |text| {
+            return parse(std.mem.trim(u8, text, " \t\r\n"));
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        }
+        // Written aside and linked into place, so a crash never leaves half a key and two starts can't both win
+        const key = Ecdsa.KeyPair.generate(io);
+        var line = std.fmt.bytesToHex(key.secret_key.toBytes(), .lower) ++ "\n".*;
+        defer std.crypto.secureZero(u8, &line);
+        var file = try std.Io.Dir.cwd().createFileAtomic(io, path, .{ .permissions = owner_only });
+        defer file.deinit(io);
+        try file.file.writeStreamingAll(io, &line);
+        try file.file.sync(io);
+        file.link(io) catch |err| switch (err) {
+            error.PathAlreadyExists => continue,
+            else => return err,
+        };
+        return key;
+    }
+    return error.ProxyKeyRaceLost;
+}
+
+/// The file's mode when anyone besides its owner may read or change it. Only POSIX has modes to check.
+pub fn exposedMode(io: std.Io, path: []const u8) ?u32 {
+    if (!has_modes) return null;
+    const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch return null;
+    const mode: u32 = @intCast(stat.permissions.toMode() & 0o777);
+    return if (mode & 0o077 != 0) mode else null;
 }
 
 pub fn parse(text: []const u8) error{InvalidProxyKey}!Ecdsa.KeyPair {
@@ -30,17 +56,7 @@ pub fn publicText(key: Ecdsa.KeyPair) [160]u8 {
     return bedwire.auth.login.encodedPublicKey(key.public_key);
 }
 
-fn create(io: std.Io, path: []const u8) !Ecdsa.KeyPair {
-    const key = Ecdsa.KeyPair.generate(io);
-    var line = std.fmt.bytesToHex(key.secret_key.toBytes(), .lower) ++ "\n".*;
-    defer std.crypto.secureZero(u8, &line);
-    var file = try std.Io.Dir.cwd().createFile(io, path, .{ .exclusive = true, .permissions = owner_only });
-    defer file.close(io);
-    try file.writeStreamingAll(io, &line);
-    return key;
-}
-
-test "load creates a key once and reads the same key back" {
+test "load creates a key once, private to its owner, and reads the same key back" {
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -53,6 +69,7 @@ test "load creates a key once and reads the same key back" {
     const loaded = try load(io, path);
     try std.testing.expectEqualSlices(u8, &created.secret_key.toBytes(), &loaded.secret_key.toBytes());
     try std.testing.expectEqualSlices(u8, &publicText(created), &publicText(loaded));
+    try std.testing.expectEqual(@as(?u32, null), exposedMode(io, path));
 }
 
 test "parse rejects anything but a hex P-384 scalar" {

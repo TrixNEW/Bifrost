@@ -56,6 +56,11 @@ pub fn main(init: std.process.Init) !void {
     // Players confirm this key once, so it has to survive restarts
     const identity = bifrost.loadIdentity(init.io, init.gpa, config.identityFile()) catch |err|
         fatal("can't load NetherNet identity {s}: {t}", .{ config.identityFile(), err });
+    for ([_]?[]const u8{ config.proxyKeyFile(), config.identityFile() }) |key_file| {
+        const path = key_file orelse continue;
+        if (bifrost.exposedKeyMode(init.io, path)) |mode|
+            config_log.warn("{s} has mode {o:0>3}, so other accounts can read this private key; run chmod 600 {s}", .{ path, mode, path });
+    }
     if (config.auth == .verify)
         config_log.info("Backends must trust proxy key {s}", .{&bifrost.proxyKeyText(proxy_key orelse identity)})
     else

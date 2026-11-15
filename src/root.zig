@@ -29,6 +29,7 @@ pub const Managed = @import("session/Managed.zig");
 pub const Plugins = @import("plugin/Plugins.zig");
 pub const plugin_abi = @import("plugin/abi.zig");
 pub const loadProxyKey = @import("session/proxy_key.zig").load;
+pub const exposedKeyMode = @import("session/proxy_key.zig").exposedMode;
 pub const proxyKeyText = @import("session/proxy_key.zig").publicText;
 
 // glibc gives the heap top back after every burst of frees and faults it in again on the next one,

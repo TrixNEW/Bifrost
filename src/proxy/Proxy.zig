@@ -441,7 +441,14 @@ fn serviceReady(self: *Proxy) error{Canceled}!void {
         // A full barrier: a plain store could still be in flight when the poll below finds nothing, and
         // a notify racing with it would then see the link as queued and never wake it
         link.queued.store(false, .seq_cst);
-        try link.service();
+        link.service() catch |err| {
+            // Left marked queued, the rest could never be scheduled again
+            while (next) |rest| {
+                next = rest.next_ready;
+                rest.queued.store(false, .seq_cst);
+            }
+            return err;
+        };
         if (link.isFinished() and !link.queued.load(.acquire)) {
             const removed = self.links.swapRemove(link.id);
             std.debug.assert(removed);

@@ -164,7 +164,8 @@ pub fn iceBind(self: *const Config) ?[]const u8 {
 
 pub fn setIceBind(self: *Config, address: []const u8) error{InvalidAddress}!void {
     _ = std.Io.net.IpAddress.parse(address, 0) catch return error.InvalidAddress;
-    if (address.len > self.ice_bind_storage.len) return error.InvalidAddress;
+    // NetherNet keeps it null-terminated
+    if (address.len >= self.ice_bind_storage.len) return error.InvalidAddress;
     @memcpy(self.ice_bind_storage[0..address.len], address);
     self.ice_bind_len = address.len;
 }

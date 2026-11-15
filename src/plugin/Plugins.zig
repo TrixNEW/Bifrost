@@ -118,11 +118,32 @@ const Loaded = struct {
     outstanding: std.atomic.Value(u32) = .init(0),
     quota: Work.Quota = .{},
     ready: std.atomic.Value(bool) = .init(false),
+    // The second it counts in, high half, and its lines so far
+    log_window: std.atomic.Value(u64) = .init(0),
 
     pub fn label(self: *const Loaded) []const u8 {
         return self.metadata.name();
     }
+
+    /// Null drops the line. Otherwise how many lines the last busy second dropped, to report them.
+    fn admitLog(self: *Loaded, second: u32) ?u64 {
+        var old = self.log_window.load(.monotonic);
+        while (true) {
+            const same = old >> 32 == second;
+            const lines: u64 = if (same) old & std.math.maxInt(u32) else 0;
+            const next = (@as(u64, second) << 32) | @min(lines + 1, std.math.maxInt(u32));
+            if (self.log_window.cmpxchgWeak(old, next, .monotonic, .monotonic)) |actual| {
+                old = actual;
+                continue;
+            }
+            if (lines >= max_log_lines_per_second) return null;
+            return if (same) 0 else (old & std.math.maxInt(u32)) -| max_log_lines_per_second;
+        }
+    }
 };
+
+// A plugin logging faster than this would hold every worker up on the console and the log file
+const max_log_lines_per_second = 200;
 
 gpa: std.mem.Allocator,
 backends: []const Backend,
@@ -663,8 +684,11 @@ fn from(context: *anyopaque) *Loaded {
 
 fn hostLog(context: *anyopaque, level: abi.LogLevel, message: abi.Str) callconv(.c) void {
     const loaded = from(context);
+    const now_ns: u64 = @intCast(std.Io.Clock.awake.now(std.Options.debug_io).nanoseconds);
+    const dropped = loaded.admitLog(@truncate(now_ns / std.time.ns_per_s)) orelse return;
     const text = message.slice();
     const name = if (loaded.ready.load(.acquire)) loaded.label() else "A loading plugin";
+    if (dropped != 0) log.warn("{s} logged more than {d} lines a second; {d} were dropped", .{ name, max_log_lines_per_second, dropped });
     switch (level) {
         .err => log.err("{s}: {s}", .{ name, text }),
         .warn => log.warn("{s}: {s}", .{ name, text }),
@@ -1447,6 +1471,16 @@ test "commands keep their description and permission, and bad ones are refused" 
     const warp = plugins.commands.getPtr("warp").?;
     try testing.expectEqualStrings("Go places", warp.description());
     try testing.expectEqual(abi.CommandPermission.owner, warp.permission);
+}
+
+test "a plugin's log lines are capped per second and the drops reported" {
+    var loaded: Loaded = .{ .owner = undefined, .library = null };
+    for (0..max_log_lines_per_second) |_| try testing.expectEqual(@as(?u64, 0), loaded.admitLog(7));
+    try testing.expectEqual(@as(?u64, null), loaded.admitLog(7));
+    try testing.expectEqual(@as(?u64, null), loaded.admitLog(7));
+    try testing.expectEqual(@as(?u64, 2), loaded.admitLog(8));
+    try testing.expectEqual(@as(?u64, 0), loaded.admitLog(8));
+    try testing.expectEqual(@as(?u64, 0), loaded.admitLog(10));
 }
 
 test "commands above any only run for verified operators" {

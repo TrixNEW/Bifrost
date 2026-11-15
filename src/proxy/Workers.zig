@@ -285,6 +285,7 @@ fn pluginLine(w: *std.Io.Writer, name: []const u8, plugin: []const u8, amount: a
 fn serveMetrics(self: *Workers) void {
     const server = &self.metrics.?;
     net_log.info("Metrics on http://{f}/metrics", .{server.socket.address});
+    if (!isLoopback(server.socket.address)) net_log.warn("Metrics have no authentication and listen beyond this machine; firewall {f}", .{server.socket.address});
     while (true) {
         const stream = server.accept(self.io) catch |err| switch (err) {
             error.Canceled => return,
@@ -302,9 +303,16 @@ fn serveMetrics(self: *Workers) void {
     }
 }
 
-// One client at a time and a deadline on every read and write, so a stuck scraper can't pile up work
+fn isLoopback(address: std.Io.net.IpAddress) bool {
+    return switch (address) {
+        .ip4 => |ip| ip.bytes[0] == 127,
+        .ip6 => |ip| std.mem.eql(u8, &ip.bytes, &(@as([15]u8, @splat(0)) ++ [_]u8{1})),
+    };
+}
+
+// One client at a time with one deadline for the whole exchange, so a stuck or trickling scraper can't hold it
 fn answerMetrics(self: *Workers, stream: std.Io.net.Stream) !void {
-    const timeout: std.Io.Timeout = .{ .duration = .{ .raw = .fromMilliseconds(metrics_timeout_ms), .clock = .awake } };
+    const timeout = (std.Io.Timeout{ .duration = .{ .raw = .fromMilliseconds(metrics_timeout_ms), .clock = .awake } }).toDeadline(self.io);
     var request: [max_metrics_request]u8 = undefined;
     var len: usize = 0;
     while (std.mem.indexOf(u8, request[0..len], "\r\n\r\n") == null) {

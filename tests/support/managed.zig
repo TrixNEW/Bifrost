@@ -24,7 +24,7 @@ pub fn proxyKey(seed: u8) !Ecdsa.KeyPair {
 }
 
 pub fn keySet() !bifrost.Keys {
-    return sample.keySet(gpa, std.testing.io);
+    return .parse(gpa, std.testing.io, sample.jwks_json);
 }
 
 pub const rawPacket = sample.rawPacket;

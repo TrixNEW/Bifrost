@@ -232,7 +232,7 @@ fn serveProxy(init: std.process.Init, args: []const [:0]const u8) !void {
     config.health_timeout_ms = @min(1_000, config.health_interval_ms / 2);
     for (args[4..]) |port| try config.addBackend(null, harness.loopback(try std.fmt.parseInt(u16, port, 10)));
     config.joinAll();
-    var keys = try sample.keySet(init.gpa, init.io);
+    var keys: bifrost.Keys = try .parse(init.gpa, init.io, sample.jwks_json);
     defer keys.deinit();
     var options: bifrost.Workers.Options = .{ .identity = bifrost.NetherNet.KeyPair.generate(init.io) };
     var plugins: bifrost.Plugins = try .init(init.gpa, config.backends(), .{ .workers = config.workers });

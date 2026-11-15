@@ -70,7 +70,9 @@ loopback or a private network; Bifrost warns at startup when it listens anywhere
 time and each gets 2 seconds in total.
 
 Beyond the traffic, queue and transfer counters, `bifrost_backend_up`, `bifrost_backend_players` and
-`bifrost_backend_draining` describe each backend, and the `turn_seconds`, `backend_dial_seconds` and
+`bifrost_backend_draining` describe each backend, `bifrost_login_failures_total{cause}` splits failed logins into
+rejected, unverifiable, throttled and the three stage timeouts, `bifrost_backend_redirects_total{result}` counts
+backend Transfer packets proxied or blocked, and the `turn_seconds`, `backend_dial_seconds` and
 `transfer_seconds` histograms show worker turn time, dial time and transfer time.
 
 ## Key files

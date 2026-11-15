@@ -199,6 +199,9 @@ test "the metrics endpoint serves Prometheus text and refuses other paths" {
         "bifrost_backend_dial_seconds_count 1\n",
         "bifrost_turn_seconds_bucket{le=\"+Inf\"}",
         "bifrost_backend_up{backend=\"",
+        "bifrost_backend_players{backend=\"",
+        "bifrost_login_failures_total{cause=\"rejected\"} 0\n",
+        "bifrost_backend_redirects_total{result=\"blocked\"} 0\n",
     }) |line| if (std.mem.indexOf(u8, page, line) == null) {
         std.debug.print("missing {s} in:\n{s}\n", .{ line, page });
         return error.MissingMetric;

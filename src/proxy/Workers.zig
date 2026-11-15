@@ -238,6 +238,13 @@ pub fn writeMetrics(self: *const Workers, w: *std.Io.Writer) std.Io.Writer.Error
     try Metrics.value(w, "backlog_pauses_total", "counter", "Times a backend was paused for a slow player.", totals_now.backlog_pauses);
     try Metrics.value(w, "slow_players_total", "counter", "Players closed for not keeping up.", totals_now.slow_players);
     try Metrics.value(w, "player_floods_total", "counter", "Players closed for sending too much.", totals_now.player_floods);
+    try Metrics.header(w, "login_failures_total", "counter", "Players who didn't get through login, by cause.");
+    inline for (.{ "rejected", "unverifiable", "throttled", "login_timeout", "pack_timeout", "join_timeout" }, .{
+        totals_now.logins_rejected, totals_now.auth_unavailable,       totals_now.logins_throttled,
+        totals_now.login_timeouts,  totals_now.resource_pack_timeouts, totals_now.join_timeouts,
+    }) |cause, amount| try w.print("bifrost_login_failures_total{{cause=\"" ++ cause ++ "\"}} {d}\n", .{amount});
+    try Metrics.header(w, "backend_redirects_total", "counter", "Transfer packets from backends, by what Bifrost did with them.");
+    try w.print("bifrost_backend_redirects_total{{result=\"proxied\"}} {d}\nbifrost_backend_redirects_total{{result=\"blocked\"}} {d}\n", .{ totals_now.backend_redirects, totals_now.redirects_blocked });
     try Metrics.value(w, "backends_connected_total", "counter", "Backend connections made.", totals_now.backends_connected);
     try Metrics.value(w, "backend_failures_total", "counter", "Backend connections that failed.", totals_now.backend_failures);
     try Metrics.header(w, "backend_up", "gauge", "1 if the last health check passed.");

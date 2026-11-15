@@ -321,8 +321,11 @@ const Batch = struct {
                 }
             }
         };
-        if (!self.to_player and kind == .command_request) if (shared.hooks) |hooks| if (hooks.plugins.hasCommands()) {
-            const request = try typed(try decode(packet), .command_request);
+        if (!self.to_player and kind == .command_request) if (shared.hooks) |hooks| if (hooks.plugins.hasCommands()) command: {
+            const envelope = try decode(packet);
+            // A split-screen guest shares the host's handle and XUID, so its commands go to the backend
+            if (envelope.header.sender_subclient != 0) break :command;
+            const request = try typed(envelope, .command_request);
             switch (hooks.plugins.runCommand(hooks.worker, self.ends.io, self.managed.plugin_player, request.command)) {
                 .not_plugin => {},
                 .ran => return null,

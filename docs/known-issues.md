@@ -19,6 +19,9 @@ What's open as of 2.0.0-rc.14. Details live in the linked docs.
   See [Backend support](backends.md).
 - **Clearing a client on transfer** sends ClientboundCloseForm, title clear and reset, and a camera shake stop on
   top of what was already reset. Whether every client build handles each of them the same way hasn't been checked.
+- **Transfers count dimension acks.** A change to another dimension the old backend sent but the client hadn't
+  acknowledged yet is expected to be acknowledged before the handoff's own; that matches bedwire's client and the
+  protocol, but a client that skipped such an ack would stall the switch until `phase_timeout_ms`.
 
 ## Limits of the design
 

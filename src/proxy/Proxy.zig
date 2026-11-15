@@ -14,6 +14,7 @@ const Rate = @import("Rate.zig");
 const Backend = @import("../backend/Backend.zig");
 const Transfer = @import("../transfer/Transfer.zig");
 pub const Link = @import("Link.zig");
+const Console = @import("Console.zig");
 const Plugins = @import("../plugin/Plugins.zig");
 const Handles = Plugins.Handles;
 const abi = @import("../plugin/abi.zig");
@@ -25,6 +26,7 @@ const trace = @import("../trace.zig");
 /// One worker. Owns its links and runs them on one task, so nothing in here needs a lock.
 const Proxy = @This();
 const log = @import("../log.zig").scoped(.player);
+const console_log = @import("../log.zig").scoped(.console);
 const transfer_log = @import("../log.zig").scoped(.transfer);
 
 const mailbox_capacity = 64;
@@ -64,6 +66,7 @@ mailbox: [mailbox_capacity]TransferRequest = undefined,
 mailbox_len: usize = 0,
 inbox: [inbox_capacity]*NetherNet.Connection = undefined,
 inbox_len: usize = 0,
+console_request: ?Console.Request = null,
 
 pub const Options = struct {
     transport: *const NetherNet,
@@ -211,9 +214,41 @@ pub fn requestTransfer(self: *Proxy, player: u64, target: Backend.Id) error{ Mai
     self.scheduler.wake.set(self.io);
 }
 
+/// Any thread. False when the worker is stopping, so it won't answer.
+pub fn ask(self: *Proxy, request: Console.Request) bool {
+    {
+        self.mailbox_mutex.lockUncancelable(self.io);
+        defer self.mailbox_mutex.unlock(self.io);
+        if (self.stop_requested.load(.acquire) or self.console_request != null) return false;
+        self.console_request = request;
+    }
+    self.scheduler.wake.set(self.io);
+    return true;
+}
+
+fn answer(self: *Proxy, request: Console.Request) void {
+    var found: u32 = 0;
+    defer request.reply.finish(self.io, found);
+    const now_ms = nowMs(self.io);
+    for (self.links.values()) |link| {
+        if (!link.joined or !request.matches(link.name())) continue;
+        found += 1;
+        switch (request.action) {
+            .list, .find => console_log.info("{f} on {s} from {f}, online for {f}", .{ link.who(), self.router.get(link.backend_id).name(), link.address, @import("../log.zig").elapsed(now_ms -| link.created_ms) }),
+            .send => link.requestTransfer(.of(request.backend)) catch |err| console_log.warn("Can't move {f} to {s}: {t}", .{ link.who(), self.router.get(.of(request.backend)).name(), err }),
+            .kick => {
+                console_log.info("Kicked {f}", .{link.who()});
+                link.ending("kicked from the console", null);
+                _ = link.disconnect(if (request.reason_len == 0) "Kicked by an operator" else request.reasonText());
+            },
+        }
+    }
+}
+
 fn drainMailbox(self: *Proxy) void {
     var requests: [mailbox_capacity]TransferRequest = undefined;
     var arrivals: [inbox_capacity]*NetherNet.Connection = undefined;
+    var console_request: ?Console.Request = null;
     const count, const arrived = counts: {
         self.mailbox_mutex.lockUncancelable(self.io);
         defer self.mailbox_mutex.unlock(self.io);
@@ -223,10 +258,13 @@ fn drainMailbox(self: *Proxy) void {
         const arrived = self.inbox_len;
         @memcpy(arrivals[0..arrived], self.inbox[0..arrived]);
         self.inbox_len = 0;
+        console_request = self.console_request;
+        self.console_request = null;
         break :counts .{ count, arrived };
     };
     for (arrivals[0..arrived]) |connection| self.welcome(connection);
     for (requests[0..count]) |request| self.startTransfer(request);
+    if (console_request) |request| self.answer(request);
 }
 
 fn startTransfer(self: *Proxy, request: TransferRequest) void {
@@ -465,6 +503,8 @@ fn closeAll(self: *Proxy) void {
         defer self.mailbox_mutex.unlock(self.io);
         for (self.inbox[0..self.inbox_len]) |connection| connection.destroy();
         self.inbox_len = 0;
+        if (self.console_request) |request| request.reply.finish(self.io, 0);
+        self.console_request = null;
     }
     while (self.links.pop()) |entry| self.retire(entry.value);
     self.scheduler.ready.store(null, .monotonic);

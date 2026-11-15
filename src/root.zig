@@ -50,6 +50,7 @@ test {
     _ = Backend;
     _ = Health;
     _ = @import("backend/Router.zig");
+    _ = @import("proxy/Console.zig");
     _ = NetherNet;
     _ = Listener;
     _ = Peer;

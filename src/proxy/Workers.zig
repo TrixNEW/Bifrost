@@ -12,11 +12,13 @@ const Proxy = @import("Proxy.zig");
 const Stats = @import("Stats.zig");
 const Metrics = @import("Metrics.zig");
 const Plugins = @import("../plugin/Plugins.zig");
+const Console = @import("Console.zig");
 
 const Workers = @This();
 const Log = @import("../log.zig");
 const log = Log.scoped(.stats);
 const net_log = Log.scoped(.network);
+const console_log = Log.scoped(.console);
 
 const report_interval_s = 60;
 const metrics_timeout_ms = 2_000;
@@ -37,6 +39,8 @@ dropped: std.atomic.Value(u64) = .init(0),
 plugins: ?*Plugins,
 auth: Observer.Auth,
 metrics: ?std.Io.net.Server = null,
+console: bool = false,
+console_reply: Console.Reply = .{},
 
 pub const Options = struct {
     auth: Observer.Auth = .off,
@@ -45,6 +49,8 @@ pub const Options = struct {
     identity: NetherNet.KeyPair,
     // Checked at signaling too, so clients prove at the transport the key their Login uses
     verify_signaling: bool = false,
+    // Reads operator commands from stdin
+    console: bool = false,
 };
 
 /// The key backends see Bifrost dial with, null for the listener's own identity.
@@ -69,6 +75,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         .proxies = &.{},
         .plugins = options.plugins,
         .auth = options.auth,
+        .console = options.console,
     };
     errdefer self.admission.deinit();
     var ice_servers: [Config.max_ice_servers][]const u8 = undefined;
@@ -193,6 +200,8 @@ pub fn run(self: *Workers) !void {
         .off => null,
     };
     defer if (keys_task) |*task| task.cancel(self.io);
+    var console_task: ?std.Io.Future(void) = if (self.console) try self.io.concurrent(readConsole, .{self}) else null;
+    defer if (console_task) |*task| task.cancel(self.io);
     var metrics_task: ?std.Io.Future(void) = if (self.metrics != null) try self.io.concurrent(serveMetrics, .{self}) else null;
     defer if (metrics_task) |*task| task.cancel(self.io);
 
@@ -365,6 +374,80 @@ fn report(self: *Workers) void {
             self.budget.used.load(.monotonic),
         };
         if (level == .info) log.info(problems, counts) else log.debug(problems, counts);
+    }
+}
+
+fn readConsole(self: *Workers) void {
+    Console.read(self.io, self, command);
+}
+
+fn command(self: *Workers, line: []const u8) error{Canceled}!void {
+    const result = Console.parse(line) catch |err| return console_log.warn("\"{s}\": {s}, type help for the commands", .{
+        line,
+        if (err == error.UnknownCommand) "unknown command" else "wrong arguments",
+    });
+    const parsed = result orelse return;
+    switch (parsed) {
+        .help => {
+            var lines = std.mem.splitScalar(u8, Console.help, '\n');
+            while (lines.next()) |text| console_log.info("{s}", .{text});
+        },
+        .status => self.logStatus(),
+        .players => {
+            const found = try self.ask(.init(.list, "", "", &self.console_reply));
+            console_log.info("{d} online", .{found});
+        },
+        .find => |player| if (try self.ask(.init(.find, player, "", &self.console_reply)) == 0) console_log.info("Nobody named {s} is online", .{player}),
+        .kick => |args| if (try self.ask(.init(.kick, args.player, args.reason, &self.console_reply)) == 0) console_log.info("Nobody named {s} is online", .{args.player}),
+        .send => |args| {
+            const target = self.config.findBackend(args.backend) orelse return console_log.warn("No backend is named {s}", .{args.backend});
+            var request: Console.Request = .init(.send, args.player, "", &self.console_reply);
+            request.backend = @intCast(target.index());
+            if (try self.ask(request) == 0) console_log.info("Nobody named {s} is online", .{args.player});
+        },
+        .drain, .undrain => |name| {
+            const target = self.config.findBackend(name) orelse return console_log.warn("No backend is named {s}", .{name});
+            const draining = parsed == .drain;
+            if (!self.health.setDraining(target, draining)) return console_log.info("{s} already {s}", .{ name, if (draining) "drains" else "takes players" });
+            if (draining)
+                console_log.info("{s} takes no new players or transfers; its {d} stay", .{ name, self.health.proxied(target) })
+            else
+                console_log.info("{s} takes players again", .{name});
+        },
+        .log => |level| {
+            Log.setConsoleLevel(level);
+            console_log.info("Console logs at {t} and above", .{level});
+        },
+        .stop => {
+            console_log.info("Stopping", .{});
+            self.stop();
+        },
+    }
+}
+
+// Every worker answers for its own players; the last one to finish wakes the console
+fn ask(self: *Workers, request: Console.Request) error{Canceled}!u32 {
+    self.console_reply.reset(@intCast(self.proxies.len));
+    for (self.proxies) |proxy| if (!proxy.ask(request)) self.console_reply.finish(self.io, 0);
+    try self.console_reply.done.wait(self.io);
+    return self.console_reply.found.load(.monotonic);
+}
+
+fn logStatus(self: *Workers) void {
+    console_log.info("{d} online, {d}/{d} backends up", .{ self.admission.active.load(.monotonic), self.health.healthyCount(), self.health.backends.len });
+    for (self.health.backends, 0..) |*backend, i| {
+        const id: @import("../backend/Backend.zig").Id = .of(i);
+        console_log.info("{f}: {s}{s}, {d} from this proxy, {d} reported", .{
+            backend.*,
+            switch (self.health.status(id)) {
+                .unknown => "not checked yet",
+                .healthy => "up",
+                .unhealthy => "down",
+            },
+            if (self.health.isDraining(id)) ", draining" else "",
+            self.health.proxied(id),
+            self.health.entries[i].players.load(.monotonic),
+        });
     }
 }
 

@@ -85,6 +85,7 @@ pub fn main(init: std.process.Init) !void {
         .plugins = if (plugins.loaded.items.len != 0) &plugins else null,
         .identity = identity,
         .verify_signaling = true,
+        .console = true,
     }) catch |err| {
         net_log.err("can't listen on {f}: {t}{s}", .{ config.bind, err, if (err == error.AddressInUse) " (is another server using the port?)" else "" });
         std.process.exit(1);

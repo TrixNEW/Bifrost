@@ -181,6 +181,11 @@ fn logEnd(self: *const Link) void {
         log.info("{f} left {s} after {f}: {s}", .{ self.who(), backend, lasted, reason });
 }
 
+/// The player's display name, empty until they logged in.
+pub fn name(self: *const Link) []const u8 {
+    return self.name_storage[0..self.name_len];
+}
+
 /// The player's name once known, their link id before that.
 pub fn who(self: *const Link) Who {
     return .{ .link = self };

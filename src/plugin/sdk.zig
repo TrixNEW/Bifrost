@@ -73,6 +73,8 @@ pub const Host = struct {
     }
 
     pub fn commandWith(self: Host, name: []const u8, options: CommandOptions, comptime handler: CommandHandler) Error!void {
+        // Hosts before revision 8 let anyone run a command whatever its permission
+        if (options.permission != .any and !self.raw.has(.revision)) return error.Unsupported;
         const Trampoline = struct {
             fn call(_: ?*anyopaque, request: *const Command) callconv(.c) void {
                 handler(request);

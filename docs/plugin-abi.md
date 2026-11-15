@@ -230,7 +230,10 @@ Since revision 8 a command registered above `ANY` only runs for operators: playe
 `[commands] operators`. Anyone else gets "You don't have permission to use this command." and neither the plugin
 nor a backend command of the same name sees it. With no operators configured, such commands never run. Names and
 anything else the client claims are never trusted for this. The levels above `ANY` all mean "operator"; their only
-other effect is which clients list the command in autocomplete.
+other effect is which clients list the command in autocomplete. Older hosts run such commands for anyone, so the Zig
+SDK and `bifrost.hpp` refuse them with `UNSUPPORTED` unless `BIFROST_HOST_HAS(host, revision)`; check the same when
+calling the C ABI directly. Commands from a split-screen guest go to the backend, since the guest shares the host's
+handle and XUID.
 
 `bifrost_command.is_operator` (read it when `struct_size` covers it) tells an `ANY` command whether the player is
 an operator, for commands that do more for operators. Finer rules, such as ranks, belong in the plugin, keyed by the

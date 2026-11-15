@@ -75,6 +75,8 @@ public:
     /// Calls (object->*Method)(command, args) for `/name`.
     template <auto Method, class T>
     void command(std::string_view name, std::string_view description, bifrost_command_permission permission, T *object) const {
+        // Hosts before revision 8 let anyone run a command whatever its permission
+        if (permission != BIFROST_PERMISSION_ANY && !BIFROST_HOST_HAS(raw_, revision)) throw Failure(BIFROST_STATUS_UNSUPPORTED);
         bifrost_command_info info{};
         info.struct_size = sizeof(info);
         info.permission = permission;

@@ -81,7 +81,8 @@ A throttled login is told the server is busy (managed mode) before any signature
 byte rate is disconnected as a flood; in passthrough this only applies until the Login is through, and
 unreliable messages are dropped until then, since the meter and the Login check only see the reliable channel. Batches
 relayed without decompressing count by their size on the wire, since the opaque relay never inflates them, and
-nothing the backend sends is metered. Plugin transfer and action calls past `max_concurrent` get `BUSY`.
+nothing the backend sends is metered. Plugin transfer and action calls past `max_concurrent`, or to a draining or full
+backend, get `BUSY`.
 
 ## Backpressure
 

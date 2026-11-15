@@ -86,6 +86,10 @@ fallback = []
 # "round_robin", "least_players" (fewest of this proxy's players) or "first" (fill each in turn)
 balance = "round_robin"
 
+[commands]
+# XUIDs whose players may run plugin commands registered above "any". Names can't be verified, so XUIDs only.
+# Managed sessions only
+operators = []
 
 [logging]
 # error, warn, info, debug or trace. debug shows connection stages and routing, trace adds NetherNet signaling

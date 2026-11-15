@@ -68,6 +68,7 @@ pub fn main(init: std.process.Init) !void {
         .packets = config.session_mode == .managed,
         .slow_callback_ns = @as(u64, config.slow_plugin_callback_ms) * std.time.ns_per_ms,
         .task_threads = config.plugin_task_threads,
+        .operators = config.operators(),
     });
     defer plugins.deinit();
     var disabled: [bifrost.Config.max_disabled_plugins][]const u8 = undefined;

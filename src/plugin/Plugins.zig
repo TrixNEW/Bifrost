@@ -31,7 +31,11 @@ pub const Options = struct {
     max_messages_per_plugin: u32 = 256,
     max_injection_bytes: u32 = 4 * 1024 * 1024,
     max_injection_bytes_per_plugin: u32 = 1024 * 1024,
+    // Verified XUIDs allowed to run commands registered above BIFROST_COMMAND_ANY
+    operators: []const u64 = &.{},
 };
+
+pub const CommandResult = enum { not_plugin, ran, denied };
 
 pub const Tracking = struct {
     player: bool = false,
@@ -347,19 +351,24 @@ pub fn hasCommands(self: *const Plugins) bool {
     return self.commands.count() != 0;
 }
 
-pub fn runCommand(self: *const Plugins, worker: u32, io: std.Io, player: abi.Player, line: []const u8) bool {
+/// Commands above BIFROST_COMMAND_ANY only run for operators. Others never fall through to a backend command
+/// of the same name, since the plugin's replaced it.
+pub fn runCommand(self: *const Plugins, worker: u32, io: std.Io, player: abi.Player, line: []const u8) CommandResult {
     const trimmed = std.mem.trim(u8, line, " ");
     const text = if (std.mem.startsWith(u8, trimmed, "/")) trimmed[1..] else trimmed;
     const end = std.mem.indexOfScalar(u8, text, ' ') orelse text.len;
-    if (end == 0 or end > max_command_len) return false;
+    if (end == 0 or end > max_command_len) return .not_plugin;
     var name: [max_command_len]u8 = undefined;
     const lower = std.ascii.lowerString(&name, text[0..end]);
-    const command = self.commands.get(lower) orelse return false;
+    const command = self.commands.get(lower) orelse return .not_plugin;
+    const operator = self.isOperator(player);
+    if (command.permission != .any and !operator) return .denied;
     const request: abi.Command = .{
         .worker = worker,
         .player = player,
         .name = .of(lower),
         .args = .of(std.mem.trim(u8, text[end..], " ")),
+        .is_operator = @intFromBool(operator),
     };
     const started = Packets.now(io);
     const outer = Work.enter();
@@ -374,7 +383,18 @@ pub fn runCommand(self: *const Plugins, worker: u32, io: std.Io, player: abi.Pla
     command.callback(command.user, &request);
     Work.hosted = outer;
     self.timed(command.loaded, worker, io, started, "on command {s}", .{lower});
-    return true;
+    return .ran;
+}
+
+/// Only an Xbox-verified XUID counts, never a name or anything the client claims.
+pub fn isOperator(self: *const Plugins, player: abi.Player) bool {
+    if (self.options.operators.len == 0) return false;
+    var info: abi.PlayerInfo = undefined;
+    // Only the handle table's lock changes
+    if (!@constCast(&self.handles).copyInfo(player, &info)) return false;
+    if (info.state.authentication != .authenticated or info.online == 0 or info.xuid_len == 0) return false;
+    const xuid = std.fmt.parseInt(u64, info.xuid[0..info.xuid_len], 10) catch return false;
+    return std.mem.indexOfScalar(u64, self.options.operators, xuid) != null;
 }
 
 const Owner = struct {
@@ -1429,6 +1449,35 @@ test "commands keep their description and permission, and bad ones are refused" 
     try testing.expectEqual(abi.CommandPermission.owner, warp.permission);
 }
 
+test "commands above any only run for verified operators" {
+    Probe.reset();
+    var plugins: Plugins = try .init(testing.allocator, &.{}, .{ .operators = &.{2535400000000001} });
+    defer plugins.deinit();
+    try plugins.add(Probe.described, null);
+    const route: Handles.Route = .{ .context = &plugins, .link = 1, .transfer = routedTransfer };
+    const admin = try plugins.handles.acquire(testing.allocator, route);
+    const player = try plugins.handles.acquire(testing.allocator, route);
+    const offline = try plugins.handles.acquire(testing.allocator, route);
+    const unverified = try plugins.handles.acquire(testing.allocator, route);
+    plugins.handles.setIdentity(admin, "Admin", "2535400000000001", "", true);
+    plugins.handles.setIdentity(player, "Steve", "2535400000000002", "", true);
+    plugins.handles.setIdentity(offline, "Admin", "2535400000000001", "", false);
+    plugins.handles.setName(unverified, "Admin");
+
+    try testing.expectEqual(CommandResult.ran, plugins.runCommand(0, testing.io, admin, "/warp spawn"));
+    for ([_]abi.Player{ player, offline, unverified, .{} }) |who| {
+        try testing.expectEqual(CommandResult.denied, plugins.runCommand(0, testing.io, who, "/warp spawn"));
+    }
+    try testing.expectEqual(@as(usize, 1), Probe.events);
+
+    var open: Plugins = try .init(testing.allocator, &.{}, .{});
+    defer open.deinit();
+    try open.add(Probe.described, null);
+    const nobody = try open.handles.acquire(testing.allocator, route);
+    open.handles.setIdentity(nobody, "Admin", "2535400000000001", "", true);
+    try testing.expectEqual(CommandResult.denied, open.runCommand(0, testing.io, nobody, "/warp"));
+}
+
 test "duplicate subscriptions are refused and random host input only gets a status back" {
     Probe.reset();
     Work.hosted = true;
@@ -1458,9 +1507,9 @@ test "duplicate subscriptions are refused and random host input only gets a stat
         try testing.expectEqual(abi.Status.unsupported, host.spawn_task(host.context, player, null, null, null));
     }
     const before = Probe.events;
-    try testing.expect(plugins.runCommand(0, testing.io, .{}, "  /PROBE  now "));
+    try testing.expectEqual(CommandResult.ran, plugins.runCommand(0, testing.io, .{}, "  /PROBE  now "));
     try testing.expectEqual(before + 1, Probe.events);
-    try testing.expect(!plugins.runCommand(0, testing.io, .{}, "/probes"));
+    try testing.expectEqual(CommandResult.not_plugin, plugins.runCommand(0, testing.io, .{}, "/probes"));
 }
 
 const Delivery = struct {

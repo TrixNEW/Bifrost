@@ -128,6 +128,8 @@ fn readRoot(config: *Config, root: *const toml.Table, diag: *Diagnostic) Error!v
             try readPlugins(config, try table(diag, key, value), diag);
         } else if (eql(name, "logging")) {
             try readLogging(config, try table(diag, key, value), diag);
+        } else if (eql(name, "commands")) {
+            try readCommands(config, try table(diag, key, value), diag);
         } else if (eql(name, "routing")) {
             // Names backends, so it's read once they're all known
             _ = try table(diag, key, value);
@@ -136,6 +138,24 @@ fn readRoot(config: *Config, root: *const toml.Table, diag: *Diagnostic) Error!v
         } else return fail(diag, key, "unknown section", .{});
     }
     if (root.get("routing")) |value| try readRouting(config, value.table, diag);
+}
+
+fn readCommands(config: *Config, section: *const toml.Table, diag: *Diagnostic) Error!void {
+    var it = section.iterator();
+    while (it.next()) |entry| {
+        const key: Key = .{ .section = "commands", .name = entry.key_ptr.* };
+        const value = entry.value_ptr.*;
+        if (eql(key.name.?, "operators")) {
+            if (value != .array) return fail(diag, key, "expected a list of XUIDs", .{});
+            for (value.array.items) |item| {
+                const xuid = try string(diag, key, item);
+                config.addOperator(xuid) catch |err| return switch (err) {
+                    error.InvalidXuid => fail(diag, key, "\"{s}\" isn't a XUID; operators are listed by XUID, not name", .{xuid}),
+                    error.TooManyOperators => fail(diag, key, "at most {d} operators", .{Config.max_operators}),
+                };
+            }
+        } else return fail(diag, key, "unknown key", .{});
+    }
 }
 
 fn readRouting(config: *Config, section: *const toml.Table, diag: *Diagnostic) Error!void {
@@ -549,6 +569,46 @@ test "syntax errors report a position" {
     try std.testing.expectError(error.InvalidSyntax, parse(std.testing.allocator, "[server]\nbind = \n", &diag));
     try std.testing.expectEqual(@as(usize, 2), diag.line);
     try std.testing.expect(diag.column != 0);
+}
+
+test "routing, operators and backend redirects are read and checked against the backends" {
+    var diag: Diagnostic = .{};
+    const config = try parse(std.testing.allocator,
+        \\[routing]
+        \\join = ["b", "a"]
+        \\fallback = ["c"]
+        \\balance = "least_players"
+        \\[commands]
+        \\operators = ["2535400000000001", "2535400000000001"]
+        \\[transfer]
+        \\external = true
+        \\[[backend]]
+        \\name = "a"
+        \\address = "127.0.0.1:1"
+        \\max_players = 5
+        \\[[backend]]
+        \\name = "b"
+        \\address = "127.0.0.1:2"
+        \\draining = true
+        \\[[backend]]
+        \\name = "c"
+        \\address = "127.0.0.1:3"
+    , &diag);
+    try std.testing.expectEqualSlices(Backend.Id, &.{ .of(1), .of(0) }, config.joinBackends());
+    try std.testing.expectEqualSlices(Backend.Id, &.{.of(2)}, config.fallbackBackends());
+    try std.testing.expectEqual(Config.Balance.least_players, config.balance);
+    try std.testing.expectEqualSlices(u64, &.{2535400000000001}, config.operators());
+    try std.testing.expect(config.external_transfers);
+    try std.testing.expectEqual(@as(u32, 5), config.backends()[0].max_players);
+    try std.testing.expect(config.backends()[1].draining);
+
+    const backends = "[[backend]]\nname = \"a\"\naddress = \"127.0.0.1:1\"\n";
+    try expectInvalid("[routing]\njoin = [\"missing\"]\n" ++ backends, "routing.join: no [[backend]] is named \"missing\"");
+    try expectInvalid("[routing]\njoin = [\"a\"]\nfallback = [\"a\"]\n" ++ backends, "routing.fallback: \"a\" is listed more than once in join and fallback");
+    try expectInvalid("[routing]\njoin = []\n" ++ backends, "routing.join: needs at least one backend");
+    try expectInvalid("[routing]\nbalance = \"random\"\n" ++ backends, "routing.balance: expected \"round_robin\", \"least_players\" or \"first\", got \"random\"");
+    try expectInvalid("[commands]\noperators = [\"Steve\"]\n" ++ backends, "commands.operators: \"Steve\" isn't a XUID; operators are listed by XUID, not name");
+    try std.testing.expectEqualSlices(Backend.Id, &.{.of(0)}, (try parse(std.testing.allocator, backends, &diag)).joinBackends());
 }
 
 test "invalid values name the offending key" {

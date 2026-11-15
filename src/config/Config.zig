@@ -16,6 +16,7 @@ pub const max_advertise_addresses = nethernet.advertise.maximum_addresses;
 pub const max_advertise_address_len = 45;
 pub const max_path_len = 1024;
 pub const max_disabled_plugins = 16;
+pub const max_operators = 64;
 pub const max_plugin_dir_name = 255;
 pub const default_plugins_dir = "plugins";
 pub const min_connect_timeout_ms = 500;
@@ -46,6 +47,8 @@ transfer_timeout_ms: u32 = 15_000,
 max_transfers: u32 = 64,
 content_policy: content.Policy = .initial,
 external_transfers: bool = false,
+operator_storage: [max_operators]u64 = undefined,
+operator_count: usize = 0,
 auth: Auth = .off,
 keys_file_storage: [max_path_len]u8 = undefined,
 keys_file_len: usize = 0,
@@ -226,6 +229,22 @@ pub fn disablePlugin(self: *Config, name: []const u8) error{ InvalidName, TooMan
     @memcpy(self.disabled_storage[self.disabled_count][0..name.len], name);
     self.disabled_lens[self.disabled_count] = @intCast(name.len);
     self.disabled_count += 1;
+}
+
+pub fn operators(self: *const Config) []const u64 {
+    return self.operator_storage[0..self.operator_count];
+}
+
+/// XUIDs are the only identity Xbox verifies, so operators are listed by XUID, never by name.
+pub fn addOperator(self: *Config, xuid: []const u8) error{ InvalidXuid, TooManyOperators }!void {
+    if (xuid.len == 0 or xuid.len > 20) return error.InvalidXuid;
+    for (xuid) |c| if (!std.ascii.isDigit(c)) return error.InvalidXuid;
+    const value = std.fmt.parseInt(u64, xuid, 10) catch return error.InvalidXuid;
+    if (value == 0) return error.InvalidXuid;
+    if (std.mem.indexOfScalar(u64, self.operators(), value) != null) return;
+    if (self.operator_count == max_operators) return error.TooManyOperators;
+    self.operator_storage[self.operator_count] = value;
+    self.operator_count += 1;
 }
 
 pub fn backends(self: *const Config) []const Backend {

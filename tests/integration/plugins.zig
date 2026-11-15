@@ -1624,9 +1624,9 @@ test "a native C++23 plugin loads, keeps its exceptions to itself and shuts down
     try std.testing.expectEqualStrings("Built as C++23", plugins.metadata(0).description());
     plugins.emit(&.{ .kind = .player_connected }, null);
     try std.testing.expectEqual(events_before + 1, events());
-    try std.testing.expect(plugins.runCommand(0, io, .{}, "/echo"));
+    try std.testing.expectEqual(bifrost.Plugins.CommandResult.ran, plugins.runCommand(0, io, .{}, "/echo"));
     try std.testing.expectEqual(caught_before + 1, caught());
-    try std.testing.expect(plugins.runCommand(0, io, .{}, "/ECHO hello there"));
+    try std.testing.expectEqual(bifrost.Plugins.CommandResult.ran, plugins.runCommand(0, io, .{}, "/ECHO hello there"));
     var buffer: [32]u8 = undefined;
     try std.testing.expectEqualStrings("hello there", buffer[0..args(&buffer, buffer.len)]);
     plugins.deinit();

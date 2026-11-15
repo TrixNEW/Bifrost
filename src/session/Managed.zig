@@ -321,7 +321,14 @@ const Batch = struct {
         };
         if (!self.to_player and kind == .command_request) if (shared.hooks) |hooks| if (hooks.plugins.hasCommands()) {
             const request = try typed(try decode(packet), .command_request);
-            if (hooks.plugins.runCommand(hooks.worker, self.ends.io, self.managed.plugin_player, request.command)) return null;
+            switch (hooks.plugins.runCommand(hooks.worker, self.ends.io, self.managed.plugin_player, request.command)) {
+                .not_plugin => {},
+                .ran => return null,
+                .denied => {
+                    self.managed.sendText(self.ends, "You don't have permission to use this command.") catch {};
+                    return null;
+                },
+            }
         };
         if (self.to_player) {
             try self.managed.sentToPlayer(kind, packet);

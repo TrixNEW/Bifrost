@@ -357,6 +357,8 @@ typedef struct bifrost_command {
     bifrost_player player;
     bifrost_str name;
     bifrost_str args;
+    /* Revision 8: 1 when the player's verified XUID is in [commands] operators */
+    uint32_t is_operator;
 } bifrost_command;
 
 typedef void (*bifrost_command_fn)(void *user, const bifrost_command *command) BIFROST_NOEXCEPT;

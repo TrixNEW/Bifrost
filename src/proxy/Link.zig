@@ -241,6 +241,8 @@ pub fn forwardToBackend(self: *Link, message: NetherNet.Message) !void {
     if (self.managed) |managed| {
         if (self.backend == null and self.dial_task == null and !managed.orphaned) return error.BackendClosed;
         managed.fromPlayer(self.ends(), payload) catch |err| {
+            // A send can find the old backend gone before reading it does
+            if (self.backend) |*backend| if (!backend.connected() and self.orphan(err)) return;
             if (managed.identity == null and managed.player_phase == .login) self.authentication = if (err == error.OutOfMemory or err == error.ServerBusy) .unavailable else .rejected;
             return err;
         };

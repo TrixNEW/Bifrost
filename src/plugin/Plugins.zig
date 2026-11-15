@@ -675,7 +675,23 @@ fn hostFor(loaded: *Loaded) abi.Host {
         .backend_health = hostBackendHealth,
         .client_data = hostClientData,
         .set_client_data = hostSetClientData,
+        .find_player = hostFindPlayer,
+        .list_players = hostListPlayers,
     };
+}
+
+fn hostFindPlayer(context: *anyopaque, name_or_xuid: abi.Str, out: ?*abi.Player) callconv(.c) abi.Status {
+    const result = out orelse return .invalid_argument;
+    const text = input(name_or_xuid, Handles.max_name_len) orelse return .invalid_argument;
+    result.* = from(context).owner.handles.lookup(text) orelse return .not_found;
+    return .ok;
+}
+
+fn hostListPlayers(context: *anyopaque, out: ?[*]abi.Player, capacity: usize, total: ?*usize) callconv(.c) abi.Status {
+    const count = total orelse return .invalid_argument;
+    if (out == null and capacity != 0) return .invalid_argument;
+    count.* = from(context).owner.handles.list(if (out) |players| players[0..capacity] else &.{});
+    return .ok;
 }
 
 fn from(context: *anyopaque) *Loaded {

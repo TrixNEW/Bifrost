@@ -11,7 +11,7 @@ pub const max_manifest_bytes = 4096;
 pub const ManifestFn = *const fn (out: ?*Str) callconv(.c) Status;
 pub const no_backend: u32 = std.math.maxInt(u32);
 pub const no_worker: u32 = std.math.maxInt(u32);
-pub const api_revision: u32 = 7;
+pub const api_revision: u32 = 8;
 
 pub const ConnectionState = enum(u32) { connected, closing, disconnected, _ };
 pub const AuthenticationState = enum(u32) { pending, authenticated, disabled, unavailable, rejected, _ };
@@ -348,7 +348,7 @@ pub const Command = extern struct {
 
 pub const CommandFn = *const fn (user: ?*anyopaque, command: *const Command) callconv(.c) void;
 
-// Permission only affects autocomplete. Replaces any backend command with the same name
+// Above any, only [commands] operators may run it; also decides autocomplete. Replaces any backend command with the same name
 pub const CommandPermission = enum(u32) { any, game_directors, admin, host, owner, _ };
 
 pub const CommandInfo = extern struct {
@@ -419,6 +419,8 @@ pub const Host = extern struct {
     client_data: *const fn (context: *anyopaque, player: Player, out: ?*Str) callconv(.c) Status,
     set_client_data: *const fn (context: *anyopaque, player: Player, json: Str) callconv(.c) Status,
     revision: u32 = api_revision,
+    find_player: *const fn (context: *anyopaque, name_or_xuid: Str, out: ?*Player) callconv(.c) Status,
+    list_players: *const fn (context: *anyopaque, out: ?[*]Player, capacity: usize, total: ?*usize) callconv(.c) Status,
 
     pub fn has(self: *const Host, comptime field: std.meta.FieldEnum(Host)) bool {
         const name = @tagName(field);

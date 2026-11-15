@@ -97,6 +97,7 @@ BIFROST_EXPORT size_t bifrost_fixture_layout(uint64_t *out, size_t capacity) {
     FIELD(bifrost_command, player);
     FIELD(bifrost_command, name);
     FIELD(bifrost_command, args);
+    FIELD(bifrost_command, is_operator);
     SIZE(bifrost_command_info);
     FIELD(bifrost_command_info, struct_size);
     FIELD(bifrost_command_info, permission);
@@ -143,6 +144,8 @@ BIFROST_EXPORT size_t bifrost_fixture_layout(uint64_t *out, size_t capacity) {
     FIELD(bifrost_host, client_data);
     FIELD(bifrost_host, set_client_data);
     FIELD(bifrost_host, revision);
+    FIELD(bifrost_host, find_player);
+    FIELD(bifrost_host, list_players);
     SIZE(bifrost_plugin);
     FIELD(bifrost_plugin, struct_size);
     FIELD(bifrost_plugin, abi_version);

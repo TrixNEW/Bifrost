@@ -14,7 +14,7 @@ extern "C" {
    The full contract is in docs/plugin-abi.md. */
 
 #define BIFROST_ABI_VERSION 1u
-#define BIFROST_API_REVISION 7u
+#define BIFROST_API_REVISION 8u
 #define BIFROST_NO_BACKEND UINT32_MAX
 #define BIFROST_NO_WORKER UINT32_MAX
 
@@ -363,7 +363,7 @@ typedef struct bifrost_command {
 
 typedef void (*bifrost_command_fn)(void *user, const bifrost_command *command) BIFROST_NOEXCEPT;
 
-/* Permission only hides the command in autocomplete and is never enforced. Replaces any backend command with the same name */
+/* Above ANY, only [commands] operators may run it (revision 8); also decides autocomplete. Replaces any backend command with the same name */
 typedef uint32_t bifrost_command_permission;
 enum {
     BIFROST_PERMISSION_ANY = 0,
@@ -451,6 +451,10 @@ typedef struct bifrost_host {
     bifrost_status (*client_data)(void *context, bifrost_player player, bifrost_str *out) BIFROST_NOEXCEPT;
     bifrost_status (*set_client_data)(void *context, bifrost_player player, bifrost_str json) BIFROST_NOEXCEPT;
     uint32_t revision;
+    /* Revision 8, any thread: an online player by display name in any case, or by XUID. NOT_FOUND when nobody matches */
+    bifrost_status (*find_player)(void *context, bifrost_str name_or_xuid, bifrost_player *out) BIFROST_NOEXCEPT;
+    /* Revision 8, any thread: copies up to capacity online players and sets total to how many there are */
+    bifrost_status (*list_players)(void *context, bifrost_player *out, size_t capacity, size_t *total) BIFROST_NOEXCEPT;
 } bifrost_host;
 
 /* Older hosts have a shorter table, so use this instead of sizeof */

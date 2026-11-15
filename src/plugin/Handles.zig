@@ -132,6 +132,33 @@ pub fn copyInfo(self: *Handles, player: abi.Player, out: *abi.PlayerInfo) bool {
     return true;
 }
 
+/// A player online now, by display name in any case or by XUID.
+pub fn lookup(self: *Handles, name_or_xuid: []const u8) ?abi.Player {
+    if (name_or_xuid.len == 0) return null;
+    self.enter();
+    defer self.leave();
+    for (self.slots.items, 0..) |*slot, index| {
+        if (slot.route == null) continue;
+        const xuid = slot.info.xuid[0..slot.info.xuid_len];
+        if (std.ascii.eqlIgnoreCase(slot.name[0..slot.name_len], name_or_xuid) or std.mem.eql(u8, xuid, name_or_xuid))
+            return handle(@intCast(index), slot.generation);
+    }
+    return null;
+}
+
+/// Copies as many online players as fit and returns how many there are.
+pub fn list(self: *Handles, out: []abi.Player) usize {
+    self.enter();
+    defer self.leave();
+    var total: usize = 0;
+    for (self.slots.items, 0..) |*slot, index| {
+        if (slot.route == null) continue;
+        if (total < out.len) out[total] = handle(@intCast(index), slot.generation);
+        total += 1;
+    }
+    return total;
+}
+
 pub fn invalidatePackets(self: *Handles, player: abi.Player) void {
     self.enter();
     defer self.leave();
@@ -185,6 +212,30 @@ test "a released handle goes stale even after its slot is reused" {
     try std.testing.expectEqual(@as(u64, 2), handles.route(second).?.link);
     try std.testing.expectEqual(@as(?Route, null), handles.route(.{}));
     try std.testing.expectEqual(@as(?Route, null), handles.route(.{ .id = 99 }));
+}
+
+test "players are found by name or XUID and listed while online" {
+    const gpa = std.testing.allocator;
+    var handles: Handles = .{};
+    defer handles.deinit(gpa);
+    var context: u8 = 0;
+    const to: Route = .{ .context = &context, .link = 1, .transfer = noTransfer };
+    const steve = try handles.acquire(gpa, to);
+    const alex = try handles.acquire(gpa, to);
+    handles.setIdentity(steve, "Steve", "2535400000000001", "", true);
+    handles.setName(alex, "Alex");
+    try std.testing.expectEqual(@as(?abi.Player, steve), handles.lookup("steve"));
+    try std.testing.expectEqual(@as(?abi.Player, steve), handles.lookup("2535400000000001"));
+    try std.testing.expectEqual(@as(?abi.Player, alex), handles.lookup("ALEX"));
+    try std.testing.expectEqual(@as(?abi.Player, null), handles.lookup(""));
+
+    var out: [1]abi.Player = undefined;
+    try std.testing.expectEqual(@as(usize, 2), handles.list(&out));
+    try std.testing.expectEqual(steve, out[0]);
+    handles.release(steve);
+    try std.testing.expectEqual(@as(?abi.Player, null), handles.lookup("Steve"));
+    try std.testing.expectEqual(@as(usize, 1), handles.list(&out));
+    try std.testing.expectEqual(alex, out[0]);
 }
 
 test "player snapshots copy identity and state without retaining session memory" {

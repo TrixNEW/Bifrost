@@ -163,6 +163,21 @@ pub const Host = struct {
         return info;
     }
 
+    pub fn findPlayer(self: Host, name_or_xuid: []const u8) Error!Player {
+        if (!self.raw.has(.find_player)) return error.Unsupported;
+        var player: Player = .{};
+        try check(self.raw.find_player(self.raw.context, .of(name_or_xuid), &player));
+        return player;
+    }
+
+    /// Fills as much of `buffer` as there are players and returns everyone online, which may be more.
+    pub fn listPlayers(self: Host, buffer: []Player) Error!usize {
+        if (!self.raw.has(.list_players)) return error.Unsupported;
+        var total: usize = 0;
+        try check(self.raw.list_players(self.raw.context, buffer.ptr, buffer.len, &total));
+        return total;
+    }
+
     pub fn networkStats(self: Host, player: Player, target: PacketTarget) Error!NetworkStats {
         if (!self.raw.has(.network_stats)) return error.Unsupported;
         var stats: NetworkStats = undefined;

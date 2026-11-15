@@ -306,7 +306,8 @@ physics and no say in the game, so everything here is what it saw on the wire, n
 off unless a loaded plugin declares `BIFROST_CAPABILITY_GAMEPLAY` (the player) or `BIFROST_CAPABILITY_ENTITIES`
 (other entities). The listed packets are then decoded once more, about 50 to 90 ns each. With more than one
 backend every batch is already decoded for transfers, so that is the whole cost. With a single backend, in-game
-batches can otherwise skip decoding entirely; `GAMEPLAY` gives that up in both directions and `ENTITIES` only for
+player batches can otherwise skip decoding entirely, and so can backend batches when `[transfer] external = true`
+(otherwise they're read for Transfer packets); `GAMEPLAY` gives that up in both directions and `ENTITIES` only for
 backend batches, which cost a quarter to a third of managed echo throughput in the plugin relay benchmark. With
 neither declared, the proxy does no extra work. Calls from a plugin without the matching
 capability, or for a passthrough player, return `UNSUPPORTED`. Like `network_stats` they need the player's worker
@@ -414,7 +415,8 @@ next second, and the drop count is logged.
   information, networking snapshots and the transport-level disconnect.
 - Typed fields cover Text and RequestChunkRadius. Injection also accepts PlayerSkin either way, ToastRequest, NetworkStackLatency, UpdateBlock, SetActorData, InventorySlot, ModalFormRequest and CorrectPlayerMovePrediction to players and ScriptMessage to backends. Other packets are raw bytes.
 - Every hook, command or tracking capability that needs in-game batches turns off the opaque relay for that
-  direction, and with more than one backend every batch is decoded anyway for transfers. A decoded batch that
+  direction, and with more than one backend every batch is decoded anyway for transfers, as is every backend batch
+  while `[transfer] external = false`. A decoded batch that
   no hook, command or ID translation changed still goes out as the frame it arrived in, so it pays for the
   inflate but not for encoding and compressing again.
 - `run` callbacks share one pool of `[limits] plugin_task_threads` threads (128 tasks in total, 32 per plugin), so a blocking

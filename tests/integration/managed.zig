@@ -17,12 +17,18 @@ const Setup = struct {
     running: Running,
 
     fn start(self: *Setup, backend_trusts: managed.Ecdsa.PublicKey) !void {
+        return self.startWith(backend_trusts, false);
+    }
+
+    fn startWith(self: *Setup, backend_trusts: managed.Ecdsa.PublicKey, external_transfers: bool) !void {
         self.proxy_key = try managed.proxyKey(1);
         self.keys = try managed.keySet();
         errdefer self.keys.deinit();
         try self.backend.start(io, backend_trusts);
         errdefer self.backend.deinit();
-        try self.running.start(io, try managed.config(&.{self.backend.address()}), self.options());
+        var config = try managed.config(&.{self.backend.address()});
+        config.external_transfers = external_transfers;
+        try self.running.start(io, config, self.options());
     }
 
     fn options(self: *Setup) Running.Options {
@@ -71,21 +77,24 @@ test "a managed player logs in to a backend as the proxy and relays game packets
 }
 
 test "matching compression relays in-game batches without decoding them" {
-    var setup: Setup = undefined;
-    try setup.start(try trusted());
-    defer setup.deinit();
-    setup.backend.deflate = true;
+    // Unless any Transfer address is allowed, backend batches are still read for Transfer packets
+    for ([_]bool{ true, false }, [_]u64{ 6, 3 }) |external, relayed| {
+        var setup: Setup = undefined;
+        try setup.startWith(try trusted(), external);
+        defer setup.deinit();
+        setup.backend.deflate = true;
 
-    const player = try managed.Player.connect(io, setup.running.address(), 2);
-    defer player.destroy();
-    try player.login("Steve", "2535400000000001");
-    try player.spawn();
-    try player.echo("hello");
-    try player.echo(&@as([3000]u8, @splat('x')));
-    try player.echo(&@as([64 * 1024]u8, @splat('y')));
+        const player = try managed.Player.connect(io, setup.running.address(), 2);
+        defer player.destroy();
+        try player.login("Steve", "2535400000000001");
+        try player.spawn();
+        try player.echo("hello");
+        try player.echo(&@as([3000]u8, @splat('x')));
+        try player.echo(&@as([64 * 1024]u8, @splat('y')));
 
-    setup.running.stop();
-    try std.testing.expectEqual(@as(u64, 6), setup.running.stats().managed_relayed_batches);
+        setup.running.stop();
+        try std.testing.expectEqual(relayed, setup.running.stats().managed_relayed_batches);
+    }
 }
 
 test "with somewhere to transfer to, managed traffic is decoded but not encoded again" {

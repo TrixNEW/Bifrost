@@ -512,6 +512,8 @@ pub fn backendConnected(self: *Managed, ends: Ends) !void {
 // ClientState, the chunk radius, gameplay tracking and plugin commands have to see every batch
 fn relayable(self: *const Managed, direction: abi.Direction) bool {
     if (self.shared.transfers or !self.inGame()) return false;
+    // Backend Transfer packets are checked against [[backend]] unless any address is allowed
+    if (direction == .from_backend and !self.shared.external_transfers) return false;
     const hooks = self.shared.hooks orelse return true;
     const tracked = hooks.plugins.tracking;
     if (tracked.player or (tracked.entities and direction == .from_backend)) return false;
@@ -1035,10 +1037,14 @@ test "entity tracking alone keeps player batches on the opaque relay" {
     defer plugins.deinit();
     var shared: Shared = undefined;
     shared.transfers = false;
+    shared.external_transfers = false;
     shared.hooks = .{ .plugins = &plugins, .worker = 0 };
     var managed: Managed = .{ .gpa = std.testing.allocator, .shared = &shared, .player = undefined, .upstream = undefined, .early = .init(0, 0, null) };
     managed.player.state = .in_game;
     managed.upstream.phase = .ready;
+    // Backend Transfer packets have to be checked
+    try std.testing.expect(managed.relayable(.from_player) and !managed.relayable(.from_backend));
+    shared.external_transfers = true;
     try std.testing.expect(managed.relayable(.from_player) and managed.relayable(.from_backend));
     plugins.tracking = .{ .entities = true };
     try std.testing.expect(managed.relayable(.from_player) and !managed.relayable(.from_backend));

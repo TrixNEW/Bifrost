@@ -152,9 +152,12 @@ test "max_players_per_ip turns away extra players from one address" {
     defer for (&players) |*player| player.deinit();
     for (&players) |*player| try player.roundTrip("\xfehello");
 
-    var extra: Player = try .connect(io, running.address());
-    defer extra.deinit();
-    try extra.awaitClosed();
+    // A turned-away player can lose the race and see its dial fail instead of the close
+    if (Player.connect(io, running.address())) |connected| {
+        var extra = connected;
+        defer extra.deinit();
+        try extra.awaitClosed();
+    } else |_| {}
 
     running.stop();
     try std.testing.expectEqual(@as(u64, 2), running.stats().sessions_accepted);

@@ -134,7 +134,7 @@ bifrost_status init(const bifrost_host *host, bifrost_plugin *plugin) noexcept {
         plugin->shutdown = [](void *state) noexcept { delete static_cast<T *>(state); };
         return BIFROST_STATUS_OK;
     } catch (const Failure &failure) {
-        return failure.status;
+        return failure.status == BIFROST_STATUS_OK ? BIFROST_STATUS_FAILED : failure.status;
     } catch (...) {
         return BIFROST_STATUS_FAILED;
     }

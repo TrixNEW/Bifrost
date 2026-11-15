@@ -17,7 +17,8 @@ curl -o minecraft-keys.json https://authorization.franchise.minecraft-services.n
 
 Microsoft rotates these keys. Bifrost downloads them again every `refresh_hours` (12 by default) and soon after
 a login names a key it doesn't know, writes them to `keys_file`, and also picks up any change you make to the file
-yourself, all without a restart. See [Running Bifrost](operations.md#microsofts-signing-keys).
+yourself, all without a restart. Downloads check Microsoft's certificate against the system's CA bundle, so slim
+images need `ca-certificates` installed. See [Running Bifrost](operations.md#microsofts-signing-keys).
 
 In `config/bifrost.toml`:
 

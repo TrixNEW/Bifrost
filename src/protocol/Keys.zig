@@ -28,6 +28,8 @@ refresh_s: u64 = 0,
 mutex: std.Io.Mutex = .init,
 current: *Snapshot,
 digest: u64 = 0,
+// What the file held when last read or written, so a download the file couldn't take isn't reverted by the next reload
+file_digest: u64 = 0,
 stale: std.atomic.Value(bool) = .init(false),
 reload_failing: bool = false,
 download_failing: bool = false,
@@ -42,6 +44,7 @@ pub fn load(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Keys {
     defer gpa.free(json);
     var self = try parse(gpa, io, json);
     self.path = path;
+    self.file_digest = self.digest;
     return self;
 }
 
@@ -81,7 +84,11 @@ pub fn reload(self: *Keys) !bool {
     const path = self.path orelse return false;
     const json = try std.Io.Dir.cwd().readFileAlloc(self.io, path, self.gpa, .limited(max_bytes));
     defer self.gpa.free(json);
-    return self.replace(json);
+    const digest = std.hash.Wyhash.hash(0, json);
+    if (digest == self.file_digest) return false;
+    const changed = try self.replace(json);
+    self.file_digest = digest;
+    return changed;
 }
 
 /// Swaps in these keys unless they're the ones already loaded.
@@ -106,14 +113,22 @@ pub fn download(self: *Keys) !bool {
     const json = try fetch(self.gpa, self.io);
     defer self.gpa.free(json);
     if (!try self.replace(json)) return false;
-    if (self.path) |path| {
-        var file = try std.Io.Dir.cwd().createFileAtomic(self.io, path, .{ .replace = true });
-        defer file.deinit(self.io);
-        try file.file.writeStreamingAll(self.io, json);
-        try file.file.sync(self.io);
-        try file.replace(self.io);
+    const path = self.path orelse return true;
+    if (save(self.io, path, json)) {
+        self.file_digest = self.digest;
+    } else |err| {
+        if (err == error.Canceled) return err;
+        log.warn("Can't save Microsoft's signing keys to {s}, so the next start loads the old ones: {t}", .{ path, err });
     }
     return true;
+}
+
+fn save(io: std.Io, path: []const u8, json: []const u8) !void {
+    var file = try std.Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });
+    defer file.deinit(io);
+    try file.file.writeStreamingAll(io, json);
+    try file.file.sync(io);
+    try file.replace(io);
 }
 
 /// Follows the file once a minute, and downloads every `refresh_s` or soon after an unknown key, until canceled.
@@ -126,6 +141,7 @@ pub fn watch(self: *Keys) void {
             if (changed) log.info("Reloaded {d} Microsoft signing keys from {s}", .{ self.count(), self.path.? });
             self.reload_failing = false;
         } else |err| {
+            if (err == error.Canceled) return;
             if (!self.reload_failing) log.warn("Can't reload Microsoft's signing keys from {s}, keeping the {d} loaded: {t}", .{ self.path.?, self.count(), err });
             self.reload_failing = true;
         }

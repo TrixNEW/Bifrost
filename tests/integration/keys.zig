@@ -53,6 +53,21 @@ test "a changed keys file replaces the keys while logins holding the old set fin
     _ = try now.login.find(rotated_kid);
 }
 
+test "downloaded keys the file couldn't save survive the next reload" {
+    var file: KeysFile = try .init(oidc_key.jwks_json);
+    defer file.deinit();
+    var keys: bifrost.Keys = try .load(gpa, io, file.path);
+    defer keys.deinit();
+
+    const json = try rotated();
+    defer gpa.free(json);
+    try testing.expect(try keys.replace(json));
+    try testing.expect(!try keys.reload());
+    const now = keys.acquire();
+    defer keys.release(now);
+    _ = try now.login.find(rotated_kid);
+}
+
 test "a broken keys file keeps the loaded keys until a good one replaces it" {
     var file: KeysFile = try .init(oidc_key.jwks_json);
     defer file.deinit();

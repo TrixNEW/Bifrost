@@ -25,12 +25,14 @@ transport notices a dead peer.
 |---|---|---|---|
 | NetherNet handshakes in flight | whole proxy | `[nethernet] max_negotiations` | 32 |
 | the same, from one IP | whole proxy | `[nethernet] max_negotiations_per_ip` | 4 |
-| one HTTP signaling request | per request | fixed | 15 s, 5 s to send it, 1 MiB offer |
-| open HTTP signaling connections from one IP | whole proxy | fixed | 8 |
+| one HTTP signaling request | per request | fixed | 13 s, 3 s to send it, 64 KiB offer |
+| open HTTP signaling connections from one IP | whole proxy | fixed | 4 |
+| HTTP signaling workers | whole proxy | 4 × `max_negotiations`, at least 64 | 128 |
 | finished handshakes waiting for a worker | per worker | fixed | 64 |
 
-A handshake over these limits gets HTTP 503 before any WebRTC state is created. ICE and DTLS must finish within
-`connect_timeout_ms` of the answer. Players behind one NAT share the per-IP counts, IPv6 counts per /64 and loopback is exempt.
+A handshake over these limits gets HTTP 503 before any WebRTC state is created. ICE, DTLS and SCTP must finish
+within 10 s of the answer; vanilla clients allow 15. Idle or slow sockets each hold a worker, which is why there are
+far more workers than one address may hold connections. Players behind one NAT share the per-IP counts, IPv6 counts per /64 and loopback is exempt.
 
 Players are expected to reach the signaling port directly. Forwarding headers such as `X-Forwarded-For` are not
 trusted, so behind another HTTP proxy or CDN every player shares that proxy's address and the per-IP limits apply to
@@ -110,6 +112,8 @@ report adds a line with rejections, timeouts, throttled logins, floods, slow pla
 bytes whenever any of them is non-zero. The same counters are in `Stats`.
 
 ## Plugins
+
+A plugin logging more than 200 lines a second has the rest dropped until the next second, and the count is logged.
 
 Native plugins run inside the proxy process. The limits above cover what they can ask Bifrost to queue or send,
 but a plugin can still allocate, block or crash on its own; there is no sandbox. Only load plugins you trust.

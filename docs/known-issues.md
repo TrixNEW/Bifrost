@@ -1,27 +1,32 @@
 # Known issues
 
-What's open as of 2.0.0-rc.13. Details live in the linked docs.
+What's open as of 2.0.0-rc.14. Details live in the linked docs.
 
 ## Not yet verified
 
 - **No real client has joined through Bifrost.** Every test uses in-process players and backends built on bedwire
   and nethernet-zig. Neither a vanilla Bedrock client joining Bifrost nor a full Bifrost-to-Quark session has
-  been run. The Quark login path was checked by verifying a bedwire-built login with Quark's own code.
+  been run. The Quark login path was checked by verifying a bedwire-built login with Quark's own code. See
+  [Real-client checks](testing.md#real-client-checks) for the procedure.
 - **Bifrost speaks Minecraft 1.26.60 (protocol 2225) only.** Packet codecs come from protocol-zig, which
   follows one stable protocol at a time. A client on another version gets a PlayStatus saying which side is
   outdated, and raw packets from plugins have to use the 1.26.60 layouts.
-- **A dimension change the old backend sent just before a transfer commits** can have its client ack counted as
-  the handoff's. Suspected from reading the code, not reproduced.
-- **No AddressSanitizer run.** The full suite passes on Windows and Linux in Debug, ReleaseSafe and ReleaseFast,
-  and under ThreadSanitizer on Linux (`tools/tsan.sh`), which only instruments the Zig code.
-- **`udp_mux` hasn't been tried with vanilla clients** (`config/bifrost.toml`).
+- **No AddressSanitizer run of the native libraries.** The full suite passes on Windows and Linux in Debug,
+  ReleaseSafe and ReleaseFast, and under ThreadSanitizer on Linux (`tools/tsan.sh`), which only instruments the
+  Zig code.
+- **`udp_mux` hasn't been tried with vanilla clients** (`config/bifrost.toml`), though the Pterodactyl egg turns it on.
 - **Other backends:** gophertunnel servers and vanilla BDS have no way to trust a proxy, and neither was tested.
   See [Backend support](backends.md).
+- **Clearing a client on transfer** sends ClientboundCloseForm, title clear and reset, and a camera shake stop on
+  top of what was already reset. Whether every client build handles each of them the same way hasn't been checked.
 
 ## Limits of the design
 
 - **Passthrough doesn't forward the player's IP**, so backends see Bifrost's address. Managed mode does. See
   [Setup](setup.md#other-modes).
+- **Passthrough can't police a backend's Transfer packets.** It relays batches without reading them, so a backend
+  can still send its players to any address there. Managed mode turns Transfers to listed backends into proxy
+  transfers and drops the rest.
 - **A leaked proxy key lets anyone join trusting backends as any player.** Managed logins don't carry the
   player's own Xbox token, so a backend can't double-check the XUID with Microsoft.
 - **NetherNet is slower than the old RakNet transport.**
@@ -33,8 +38,16 @@ What's open as of 2.0.0-rc.13. Details live in the linked docs.
 
   Each player also costs about 380 KiB of resident memory, and past two workers the shared libdatachannel
   threads (`[nethernet] threads`) cap throughput, not Bifrost's workers. See `tests/bench/baseline.md`.
-- **A backend's own Transfer packet is relayed as is**, so a backend can send its players to any address. Only
-  list backends you run.
-- **Forms, titles and volume entities aren't cleared on a transfer.** A form left open answers to the new backend.
+- **Transfers don't replay the target's world settings.** The target's StartGame is swallowed, so its time,
+  difficulty, game rules and weather only reach the client when the target sends them again. Volume entities and
+  NPC dialogue the old backend opened aren't tracked, so they aren't cleared.
+- **A backend that kicks or drops a player before a transfer commits** is no longer fatal: its Disconnect is held
+  back and the player waits on the target, but what they send in that gap is dropped, and if the transfer then
+  fails they're disconnected with "Lost connection to the server" rather than the backend's own reason.
+- **Signaling checks a token's P-384 signature before Microsoft's RSA one**, with no rate limit of its own, so a
+  stream of garbage offers costs CPU on the workers before it's refused. The per-address connection and handshake
+  caps bound it, the cost hasn't been measured.
+- **IPv6 per-address limits group by /64**, so a host with a routed /48 gets many separate buckets. Only matters
+  when `bind` is IPv6.
 - **Large plugin packet injections on Linux** pay glibc trim and refault costs, about 10 µs per 16 KiB. That was
   measured on 1.2.1, before the NetherNet switch.

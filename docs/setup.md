@@ -15,7 +15,9 @@ Download Microsoft's signing keys and save them next to the config:
 curl -o minecraft-keys.json https://authorization.franchise.minecraft-services.net/.well-known/keys
 ```
 
-Microsoft rotates these keys, so refresh the file now and then (a daily cron job is plenty).
+Microsoft rotates these keys. Bifrost downloads them again every `refresh_hours` (12 by default) and soon after
+a login names a key it doesn't know, writes them to `keys_file`, and also picks up any change you make to the file
+yourself, all without a restart. See [Running Bifrost](operations.md#microsofts-signing-keys).
 
 In `config/bifrost.toml`:
 
@@ -23,10 +25,18 @@ In `config/bifrost.toml`:
 [auth]
 mode = "verify"
 keys_file = "minecraft-keys.json"
+refresh_hours = 12
 
 [session]
 mode = "managed"
 proxy_key_file = "bifrost-proxy.key"
+
+[routing]
+join = ["lobby"]
+
+[commands]
+# XUIDs of the players allowed to run privileged plugin commands
+operators = ["2535400000000001"]
 
 [[backend]]
 name = "lobby"
@@ -58,8 +68,8 @@ Quark logs `Trusting 1 proxy key(s)` at startup. With several Bifrost instances,
 - **Firewall Quark.** Only Bifrost should reach Quark's signaling port and its UDP ports. Otherwise players can
   join Quark directly and skip the proxy's plugins and limits. Their logins are still checked, so this isn't an
   impersonation risk.
-- **Guard `bifrost-proxy.key`.** Whoever has it can join Quark as any player. Keep it readable only by the account
-  Bifrost runs as and out of backups you share. If it leaks, delete it, restart Bifrost, and replace the key in
+- **Guard `bifrost-proxy.key`.** Whoever has it can join Quark as any player. Bifrost creates it with mode 0600
+  and warns at startup if another account can read it. Keep it out of backups you share. If it leaks, delete it, restart Bifrost, and replace the key in
   `trusted-proxy-keys`.
 - **Keep `bifrost-identity.der` too.** Players confirm it the first time they join, so losing it makes them
   confirm a new one.
@@ -79,6 +89,11 @@ advertise_addresses = ["203.0.113.10"]
 
 Forward that UDP range with the same port numbers on both sides, plus the TCP signaling port from `bind`. The
 addresses are IP literals without a port, at most 8, and Bifrost adds them beside what ICE finds on its own.
+
+## Operating it
+
+Type `status`, `players`, `send <player> <backend>`, `drain <backend>` and the other
+[console commands](operations.md#console) into Bifrost's console, including Pterodactyl's.
 
 ## Logging
 

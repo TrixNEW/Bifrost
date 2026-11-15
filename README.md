@@ -6,13 +6,11 @@ Bifrost uses [NetherNet](https://github.com/Bedrock-Phanatics/nethernet-zig) and
 
 ## Features
 
-- **High Performance** - Event-driven networking with minimal overhead.
-- **Multi-Backend** - Connect players across multiple servers.
-- **Seamless Transfers** - Switch servers without reconnecting.
-- **Session Modes** - Passthrough and managed sessions.
-- **Native Plugins** - Extend Bifrost using Zig, C, or C++.
-- **Packet Handling** - Intercept, modify, and filter packets.
-- **Configurable** - TOML-based configuration.
+- **Xbox-verified logins** - Checks every login against Microsoft's keys and logs in to trusting backends on the player's behalf.
+- **Routing** - Join pools, fallbacks, capacity limits and draining, with health checks.
+- **Seamless transfers** - Switch servers without reconnecting.
+- **Native plugins** - Zig, C, or C++23 with a thin header-only wrapper.
+- **Operations** - Console commands, Prometheus metrics and categorized logs.
 
 ## Building
 
@@ -39,17 +37,20 @@ zig build -Doptimize=ReleaseSafe
 
 Configure Bifrost in [`config/bifrost.toml`](config/bifrost.toml).
 
-Linux x86_64 builds are on the [releases page](https://github.com/TrixNEW/Bifrost/releases). Extract the archive and start it with `./run.sh`.
+Linux x86_64 builds are on the [releases page](https://github.com/TrixNEW/Bifrost/releases). They need glibc 2.35 or newer
+(Debian 12, Ubuntu 22.04). Extract the archive and start it with `./run.sh`.
 
 For Pterodactyl hosting, use the [Bifrost egg](https://github.com/Bedrock-Phanatics/pterodactyl-eggs/blob/main/bifrost-pterodactyl-egg.json). Set `BIFROST_REF` to `main` or a release tag such as `v1.0.0`.
 
 ## Documentation
 
 - [Setup Guide](docs/setup.md)
+- [Running Bifrost](docs/operations.md)
 - [Backend Support](docs/backends.md)
 - [Plugin Development](docs/plugins.md)
 - [Plugin API](docs/plugin-abi.md)
 - [Configuration & Limits](docs/limits.md)
+- [Testing](docs/testing.md)
 - [Known Issues](docs/known-issues.md)
 
 ## Development

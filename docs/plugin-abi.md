@@ -226,10 +226,15 @@ packet listeners normally.
 
 ### Command permissions
 
-`permission` only decides whether a client lists the command in autocomplete. Bifrost never enforces it: any
-client can send any command, whatever it shows, and Bifrost doesn't know which permission level the backend gave a
-player, so it has nothing authoritative to check against. A command that needs authorization has to check it in the
-callback against something the plugin trusts, such as a list of XUIDs it saw in `PLAYER_AUTHENTICATED`.
+Since revision 8 a command registered above `ANY` only runs for operators: players whose Xbox-verified XUID is in
+`[commands] operators`. Anyone else gets "You don't have permission to use this command." and neither the plugin
+nor a backend command of the same name sees it. With no operators configured, such commands never run. Names and
+anything else the client claims are never trusted for this. The levels above `ANY` all mean "operator"; their only
+other effect is which clients list the command in autocomplete.
+
+`bifrost_command.is_operator` (read it when `struct_size` covers it) tells an `ANY` command whether the player is
+an operator, for commands that do more for operators. Finer rules, such as ranks, belong in the plugin, keyed by the
+XUID from `player_info`.
 
 ## Player handles
 
@@ -248,6 +253,11 @@ including an identity field too large for its fixed buffer. Identity is copied o
 `online` distinguishes an online identity from an authenticated offline identity; it is meaningful only when
 `authentication` is `AUTHENTICATED`. Authentication may instead be pending, disabled, unavailable or rejected.
 An empty name never means an authenticated anonymous player. `player_name` retains its original truncation rules.
+
+Revision 8 adds `find_player(name_or_xuid, out)` and `list_players(out, capacity, total)`, both safe from any thread
+and holding the same short lock. `find_player` matches a display name in any case or an exact XUID and returns
+`NOT_FOUND` when nobody online matches. `list_players` copies up to `capacity` handles of players online now and
+sets `total` to how many there are; pass `NULL` and 0 to only count. Handles may go stale right after either call.
 
 `state` reports the connection, session mode, connection phase, current backend and transfer state. `NO_BACKEND`
 means no backend has been selected. During the initial dial the selected backend is reported even before it connects.
@@ -393,8 +403,8 @@ reported by `PLAYER_CONNECTED`, not a duplicate phase event. The final disconnec
 Existing connection, authentication, backend selection and transfer callback ordering remains intact. No movement,
 combat, interaction, dimension or respawn events are added: packet subscriptions remain the source for those
 notifications and avoid extra decoding or disabling the existing relay fast path. No network anomaly event is
-invented from unsupported measurements. Command name validation, autocomplete-only permissions, plugin-attributed
-logs and rate-limited slow-callback diagnostics retain their existing behavior; no new permission or alert framework is added.
+invented from unsupported measurements. A plugin logging more than 200 lines a second has the rest dropped until the
+next second, and the drop count is logged.
 
 ## Known limitations
 
@@ -418,7 +428,7 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
 
 - `BIFROST_ABI_VERSION` changes only for a breaking change. Each side checks the other's `abi_version` and refuses
   a mismatch: Bifrost returns an error for the plugin, a plugin should return `INCOMPATIBLE`.
-- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 7.
+- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 8.
   Hosts from revision 7 expose `revision` at the end of the table. Check `BIFROST_HOST_HAS(host, revision)`
   before reading it. Continue checking each optional function with `BIFROST_HOST_HAS`. Keep the host pointer rather than copying a newer
   header's entire table from an older host. New player/network snapshot layouts are fixed in v1.
@@ -436,6 +446,9 @@ logs and rate-limited slow-callback diagnostics retain their existing behavior; 
 - Enums and status codes can gain values; treat unknown ones as "not for me" rather than as errors.
 
 ## Verification
+
+API revision 8 enforces command permissions through `[commands] operators`, adds `bifrost_command.is_operator`,
+`find_player` and `list_players`.
 
 API revision 7 runs client packet hooks before dispatching plugin commands.
 Hooks can cancel or replace a command before either a plugin or backend sees it.

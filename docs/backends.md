@@ -22,6 +22,13 @@ Without the third point, a backend that checks the Login against the transport i
 Quark v6 both do for Xbox logins) turns every proxied player away. That is deliberate: the check is what stops a
 replayed Login, and Bifrost doesn't try to work around it.
 
+## Routing and Transfer packets
+
+New players join the `[routing] join` backends and fall back to the `fallback` ones; without `[routing]` only the
+first `[[backend]]` takes them. A backend's own Transfer packet to an address or name listed in `[[backend]]` moves
+the player inside the proxy in managed mode, and is dropped when it points anywhere else unless `[transfer]
+external = true`. See [Running Bifrost](operations.md#routing).
+
 ## Quark v6
 
 Quark v6 serves NetherNet from `src/network/mcpe/nethernet` using the PHP `webrtc` extension, with HTTP signaling

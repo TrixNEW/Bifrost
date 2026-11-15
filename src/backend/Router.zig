@@ -49,6 +49,17 @@ pub fn release(self: *Router, id: Backend.Id) void {
     if (self.health) |health| health.release(id);
 }
 
+/// Takes the backend out until a probe passes. With nowhere else to send players, that probe runs now
+/// instead of turning everyone away for the rest of the interval.
+pub fn dialFailed(self: *Router, io: std.Io, id: Backend.Id) void {
+    const health = self.health orelse return;
+    health.markFailed(id);
+    for ([_][]const Backend.Id{ self.join, self.fallback }) |pool| {
+        for (pool) |other| if (self.eligible(other, none, false)) return;
+    }
+    health.recheck.set(io);
+}
+
 /// Holds a place on a transfer target, or says why it can't take the player.
 pub fn claimTarget(self: *Router, id: Backend.Id) error{ BackendDown, BackendDraining, BackendFull }!void {
     const health = self.health orelse return;
@@ -130,14 +141,33 @@ test "claims cycle through the join backends in order" {
     for ([_]u16{ 1, 2, 1, 2 }) |port| try std.testing.expectEqual(port, try claimPort(&router));
 }
 
-test "only the first backend takes new players unless routing says otherwise" {
+test "without routing the first backend takes new players and the rest are fallbacks in order" {
     var config: Config = .{};
     for (1..4) |port| try config.addBackend(null, .{ .ip4 = .loopback(@intCast(port)) });
     var router: Router = .init(&config, null);
     for (0..3) |_| try std.testing.expectEqual(@as(u16, 1), try claimPort(&router));
     var tried: Set = .{};
     tried.add(.of(0));
+    try std.testing.expectEqual(@as(?Backend.Id, .of(1)), router.claim(tried, false));
+    tried.add(.of(1));
+    try std.testing.expectEqual(@as(?Backend.Id, .of(2)), router.claim(tried, false));
+    tried.add(.of(2));
     try std.testing.expectEqual(@as(?Backend.Id, null), router.claim(tried, false));
+}
+
+test "a failed dial asks for a probe right away only when no join or fallback backend is left" {
+    var config: Config = .{};
+    for ([_][]const u8{ "lobby", "survival", "limbo" }, 1..) |name, port| try config.addBackend(name, .{ .ip4 = .loopback(@intCast(port)) });
+    try config.addJoin("lobby");
+    try config.addFallback("limbo");
+    var health: Health = .init(config.backends(), 1000, 100);
+    var router: Router = .init(&config, &health);
+    router.dialFailed(std.testing.io, .of(0));
+    try std.testing.expectEqual(Health.Status.unhealthy, health.status(.of(0)));
+    try std.testing.expect(!health.recheck.isSet());
+    try std.testing.expect(health.setDraining(.of(2), true));
+    router.dialFailed(std.testing.io, .of(0));
+    try std.testing.expect(health.recheck.isSet());
 }
 
 test "a claim never returns a skipped backend" {

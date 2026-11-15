@@ -24,8 +24,8 @@ replayed Login, and Bifrost doesn't try to work around it.
 
 ## Routing and Transfer packets
 
-New players join the `[routing] join` backends and fall back to the `fallback` ones; without `[routing]` only the
-first `[[backend]]` takes them. A backend's own Transfer packet to an address or name listed in `[[backend]]` moves
+New players join the `[routing] join` backends and fall back to the `fallback` ones; without `[routing]` the
+first `[[backend]]` takes them and the others are fallbacks in order. A backend's own Transfer packet to an address or name listed in `[[backend]]` moves
 the player inside the proxy in managed mode, and is dropped when it points anywhere else unless `[transfer]
 external = true`. See [Running Bifrost](operations.md#routing).
 

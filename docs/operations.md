@@ -37,8 +37,8 @@ max_players = 200
 ```
 
 - New players only go to `join` backends, then to `fallback` backends in the order listed, once every join
-  backend is down, draining or full. Without `[routing]`, only the first `[[backend]]` takes new players. Other
-  backends are reached by transfers.
+  backend is down, draining or full. Without `[routing]`, the first `[[backend]]` takes new players and the others
+  are fallbacks in the order listed.
 - `balance` spreads players over the join backends: `round_robin` takes turns, `least_players` picks the one
   with the fewest of this proxy's players, `first` fills each in turn (useful with `max_players`).
 - `max_players` counts this proxy's players on that backend, transfers on their way in included. Other proxies

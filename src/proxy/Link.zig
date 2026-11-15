@@ -693,7 +693,7 @@ fn adopt(self: *Link, result: Dial.Result) void {
             backend_log.warn("Can't reach {f}: {s} ({t}, {f})", .{ backend.*, NetherNet.describe(err), err, took })
         else
             backend_log.debug("Can't reach {f} for {f}: {s} ({t}, {f})", .{ backend.*, self.who(), NetherNet.describe(err), err, took });
-        if (self.env.health) |health| health.dialFailed(self.env.io, self.backend_id);
+        self.env.router.dialFailed(self.env.io, self.backend_id);
         self.vacate();
         if (self.session == null) return;
         self.connect() catch |retry_err| {

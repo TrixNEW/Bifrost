@@ -259,16 +259,21 @@ pub fn findBackend(self: *const Config, name: []const u8) ?Backend.Id {
     return null;
 }
 
-const first_backend = [_]Backend.Id{.of(0)};
+const every_backend = ids: {
+    var ids: [max_backends]Backend.Id = undefined;
+    for (&ids, 0..) |*id, i| id.* = .of(i);
+    break :ids ids;
+};
 
 /// Where new players go. The first backend unless [routing] join says otherwise.
 pub fn joinBackends(self: *const Config) []const Backend.Id {
-    if (self.join_count == 0) return if (self.backend_count == 0) &.{} else &first_backend;
+    if (self.join_count == 0) return every_backend[0..@min(self.backend_count, 1)];
     return self.join_storage[0..self.join_count];
 }
 
-/// Tried in order once every join backend is down, draining or full.
+/// Tried in order once every join backend is down, draining or full. Without [routing], the backends after the first.
 pub fn fallbackBackends(self: *const Config) []const Backend.Id {
+    if (self.join_count == 0 and self.fallback_count == 0) return every_backend[@min(self.backend_count, 1)..self.backend_count];
     return self.fallback_storage[0..self.fallback_count];
 }
 

@@ -82,7 +82,7 @@ content = "initial"
 external = false
 
 [routing]
-# Backends new players join. Unset, only the first [[backend]] takes them
+# Backends new players join. Unset, the first [[backend]] takes them and the others are fallbacks in order
 join = ["lobby"]
 # Tried in order once every join backend is down, draining or full
 fallback = []

@@ -117,7 +117,10 @@ fn verify(context: ?*anyopaque, token: []const u8) anyerror!?nethernet.sdp_ident
     const issuer = self.issuer.?;
     const keys = issuer.acquire();
     defer issuer.release(keys);
-    return try keys.signaling.verify(self.gpa, token, std.Io.Clock.real.now(self.io).toSeconds());
+    return keys.signaling.verify(self.gpa, token, std.Io.Clock.real.now(self.io).toSeconds()) catch |err| {
+        if (err == error.UnknownSigningKey) issuer.markStale();
+        return err;
+    };
 }
 
 // Backends see the proxy's own key, so they can pin it

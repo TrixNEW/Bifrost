@@ -60,6 +60,9 @@ timeout_ms = 1000
 # needs Microsoft's keys: https://authorization.franchise.minecraft-services.net/.well-known/keys
 mode = "off"
 # keys_file = "minecraft-keys.json"
+# Bifrost reloads the file when it changes, and downloads Microsoft's current keys into it this often, or sooner
+# when a login names a key it doesn't know. 0 leaves the file to you
+refresh_hours = 12
 
 [session]
 # "managed" needs auth mode = "verify", and backends must trust the proxy key it logs. It is the setup to use

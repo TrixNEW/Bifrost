@@ -50,6 +50,8 @@ external_transfers: bool = false,
 operator_storage: [max_operators]u64 = undefined,
 operator_count: usize = 0,
 auth: Auth = .off,
+// Hours between downloads of Microsoft's current keys, 0 to only follow keys_file
+keys_refresh_hours: u32 = 12,
 keys_file_storage: [max_path_len]u8 = undefined,
 keys_file_len: usize = 0,
 session_mode: SessionMode = .passthrough,

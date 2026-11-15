@@ -354,6 +354,8 @@ fn readAuth(config: *Config, section: *const toml.Table, diag: *Diagnostic) Erro
         } else if (eql(key.name.?, "keys_file")) {
             config.setKeysFile(try string(diag, key, value)) catch
                 return fail(diag, key, "must be 1 to {d} bytes", .{Config.max_path_len});
+        } else if (eql(key.name.?, "refresh_hours")) {
+            config.keys_refresh_hours = try integer(u32, diag, key, value, 0, 24 * 30);
         } else return fail(diag, key, "unknown key", .{});
     }
 }

@@ -3,12 +3,16 @@ const bedwire = @import("bedwire");
 const nethernet = @import("nethernet");
 
 /// Microsoft's signing keys, for Logins and for the identity players prove at signaling. Microsoft rotates them, so
-/// a changed keys file replaces the whole set while logins already holding the old one finish with it.
+/// a changed keys file or a fresh download replaces the whole set while logins already holding the old one finish
+/// with it.
 const Keys = @This();
 const log = @import("../log.zig").scoped(.auth);
 
 pub const check_interval_s = 60;
 pub const max_bytes = limits.max_jwks_bytes;
+// A login signed with a key we don't know asks for a download, at most this often
+const stale_retry_s = 5 * 60;
+const download_timeout_s = 15;
 
 const limits: bedwire.Limits = .{};
 const issuer = nethernet.identity_issuer;
@@ -22,22 +26,25 @@ pub const Snapshot = struct {
 gpa: std.mem.Allocator,
 io: std.Io,
 path: ?[]const u8 = null,
+// How often to download Microsoft's current keys, 0 to only follow the file
+refresh_s: u64 = 0,
 mutex: std.Io.Mutex = .init,
 current: *Snapshot,
 digest: u64 = 0,
-failing: bool = false,
+stale: std.atomic.Value(bool) = .init(false),
+reload_failing: bool = false,
+download_failing: bool = false,
 
 pub fn parse(gpa: std.mem.Allocator, io: std.Io, json: []const u8) !Keys {
-    return .{ .gpa = gpa, .io = io, .current = try snapshot(gpa, json) };
+    return .{ .gpa = gpa, .io = io, .current = try snapshot(gpa, json), .digest = std.hash.Wyhash.hash(0, json) };
 }
 
-/// Keeps `path`, which must outlive the keys, to reload from.
+/// Keeps `path`, which must outlive the keys, to reload from and save downloads to.
 pub fn load(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Keys {
     const json = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_bytes));
     defer gpa.free(json);
     var self = try parse(gpa, io, json);
     self.path = path;
-    self.digest = std.hash.Wyhash.hash(0, json);
     return self;
 }
 
@@ -66,12 +73,22 @@ pub fn count(self: *Keys) usize {
     return keys.login.count;
 }
 
-/// Reads the file again and swaps the keys when its contents changed. A file that won't parse, say one caught mid-write, leaves the current
-/// keys in place and is tried again next time.
+/// Any thread. A token named a key we don't have, so Microsoft may have rotated them.
+pub fn markStale(self: *Keys) void {
+    self.stale.store(true, .release);
+}
+
+/// Reads the file again and swaps the keys when its contents changed. A file that won't parse, say one caught
+/// mid-write, leaves the current keys in place and is tried again next time.
 pub fn reload(self: *Keys) !bool {
     const path = self.path orelse return false;
     const json = try std.Io.Dir.cwd().readFileAlloc(self.io, path, self.gpa, .limited(max_bytes));
     defer self.gpa.free(json);
+    return self.replace(json);
+}
+
+/// Swaps in these keys unless they're the ones already loaded.
+pub fn replace(self: *Keys, json: []const u8) !bool {
     const digest = std.hash.Wyhash.hash(0, json);
     if (digest == self.digest) return false;
     const fresh = try snapshot(self.gpa, json);
@@ -87,20 +104,78 @@ pub fn reload(self: *Keys) !bool {
     return true;
 }
 
-/// Checks the file once a minute until canceled.
+/// Fetches Microsoft's current keys, swaps them in and saves them to the keys file for the next start.
+pub fn download(self: *Keys) !bool {
+    const json = try fetch(self.gpa, self.io);
+    defer self.gpa.free(json);
+    if (!try self.replace(json)) return false;
+    if (self.path) |path| {
+        var file = try std.Io.Dir.cwd().createFileAtomic(self.io, path, .{ .replace = true });
+        defer file.deinit(self.io);
+        try file.file.writeStreamingAll(self.io, json);
+        try file.file.sync(self.io);
+        try file.replace(self.io);
+    }
+    return true;
+}
+
+/// Follows the file once a minute, and downloads every `refresh_s` or soon after an unknown key, until canceled.
 pub fn watch(self: *Keys) void {
+    var since_download_s: u64 = 0;
     while (true) {
         self.io.sleep(.fromSeconds(check_interval_s), .awake) catch return;
-        const changed = self.reload() catch |err| {
-            if (!self.failing) log.warn("Can't reload Microsoft's signing keys from {s}, keeping the {d} loaded: {t}", .{ self.path.?, self.count(), err });
-            self.failing = true;
-            continue;
-        };
-        if (self.failing and !changed) continue;
-        if (self.failing) log.info("Signing keys file {s} is readable again", .{self.path.?});
-        self.failing = false;
-        if (changed) log.info("Reloaded {d} Microsoft signing keys from {s}", .{ self.count(), self.path.? });
+        since_download_s += check_interval_s;
+        if (self.reload()) |changed| {
+            if (changed) log.info("Reloaded {d} Microsoft signing keys from {s}", .{ self.count(), self.path.? });
+            self.reload_failing = false;
+        } else |err| {
+            if (!self.reload_failing) log.warn("Can't reload Microsoft's signing keys from {s}, keeping the {d} loaded: {t}", .{ self.path.?, self.count(), err });
+            self.reload_failing = true;
+        }
+        if (self.refresh_s == 0) continue;
+        const stale = self.stale.load(.acquire) and since_download_s >= stale_retry_s;
+        if (!stale and since_download_s < self.refresh_s) continue;
+        since_download_s = 0;
+        self.stale.store(false, .release);
+        if (self.download()) |changed| {
+            if (changed) log.info("Downloaded {d} new Microsoft signing keys", .{self.count()}) else log.debug("Microsoft's signing keys haven't changed", .{});
+            self.download_failing = false;
+        } else |err| {
+            if (err == error.Canceled) return;
+            if (!self.download_failing) log.warn("Can't download Microsoft's signing keys, keeping the {d} loaded: {t}", .{ self.count(), err });
+            self.download_failing = true;
+        }
     }
+}
+
+fn fetch(gpa: std.mem.Allocator, io: std.Io) ![]u8 {
+    const Result = union(enum) { body: anyerror![]u8, timeout: std.Io.Cancelable!void };
+    var results: [2]Result = undefined;
+    var select = std.Io.Select(Result).init(io, &results);
+    defer while (select.cancel()) |pending| if (pending == .body) {
+        const body = pending.body catch continue;
+        gpa.free(body);
+    };
+    try select.concurrent(.timeout, std.Io.sleep, .{ io, std.Io.Duration.fromSeconds(download_timeout_s), .awake });
+    try select.concurrent(.body, get, .{ gpa, io });
+    return switch (try select.await()) {
+        .body => |body| body,
+        .timeout => |result| {
+            try result;
+            return error.Timeout;
+        },
+    };
+}
+
+fn get(gpa: std.mem.Allocator, io: std.Io) anyerror![]u8 {
+    var client: std.http.Client = .{ .allocator = gpa, .io = io };
+    defer client.deinit();
+    const buffer = try gpa.alloc(u8, max_bytes);
+    defer gpa.free(buffer);
+    var writer = std.Io.Writer.fixed(buffer);
+    const result = try client.fetch(.{ .location = .{ .url = issuer.minecraft_keys_url }, .response_writer = &writer });
+    if (result.status != .ok) return error.KeysUnavailable;
+    return gpa.dupe(u8, writer.buffered());
 }
 
 fn snapshot(gpa: std.mem.Allocator, json: []const u8) !*Snapshot {

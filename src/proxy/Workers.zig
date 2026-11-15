@@ -196,7 +196,7 @@ pub fn run(self: *Workers) !void {
     var report_task = try self.io.concurrent(report, .{self});
     defer report_task.cancel(self.io);
     var keys_task: ?std.Io.Future(void) = switch (self.auth) {
-        .verify => |keys| if (keys.path != null) try self.io.concurrent(Observer.Keys.watch, .{keys}) else null,
+        .verify => |keys| if (keys.path != null or keys.refresh_s != 0) try self.io.concurrent(Observer.Keys.watch, .{keys}) else null,
         .off => null,
     };
     defer if (keys_task) |*task| task.cancel(self.io);

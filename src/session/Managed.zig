@@ -659,6 +659,7 @@ fn authenticate(self: *Managed, ends: Ends, packet: bedwire.Packet) !void {
     defer self.shared.keys.release(keys);
     const policy: bedwire.TrustPolicy = .{ .oidc = .{ .now = std.Io.Clock.real.now(ends.io).toSeconds(), .keys = &keys.login } };
     var identity = self.player.authenticateLoginPacket(self.gpa, packet, policy) catch |err| {
+        if (err == error.UnknownKey) self.shared.keys.markStale();
         if (err == error.OutOfMemory) ends.stats.bump(.auth_unavailable, 1) else ends.stats.bump(.logins_rejected, 1);
         log.info("Rejected a login from {f}: {t}", .{ self.addressText(), err });
         return err;

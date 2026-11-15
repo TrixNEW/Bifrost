@@ -41,6 +41,7 @@ pub fn main(init: std.process.Init) !void {
     var keys: ?bifrost.Keys = if (config.keysFile()) |keys_path| bifrost.Keys.load(init.gpa, rt.io(), keys_path) catch |err|
         fatal("can't load auth keys {s}: {t}", .{ keys_path, err }) else null;
     defer if (keys) |*set| set.deinit();
+    if (keys) |*set| set.refresh_s = @as(u64, config.keys_refresh_hours) * std.time.s_per_hour;
     const auth: bifrost.Auth = switch (config.auth) {
         .off => .off,
         .verify => .{ .verify = &keys.? },

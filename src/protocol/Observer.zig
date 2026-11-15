@@ -103,6 +103,7 @@ fn verify(self: *Observer, ctx: Context, packet: bedwire.Tap.Packet) Event {
         .keys = &keys.login,
     } };
     const identity = self.tap.authenticateLoginPacket(ctx.gpa, packet, policy) catch |err| {
+        if (err == error.UnknownKey) ctx.auth.verify.markStale();
         if (err == error.OutOfMemory) {
             log.warn("Can't verify a login: {t}", .{err});
             return .auth_unavailable;

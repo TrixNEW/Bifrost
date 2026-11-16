@@ -1,4 +1,3 @@
-const std = @import("std");
 const nethernet = @import("nethernet");
 const NetherNet = @import("NetherNet.zig");
 const Notify = @import("Notify.zig");

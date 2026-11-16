@@ -17,12 +17,9 @@ const Console = @import("Console.zig");
 const Workers = @This();
 const Log = @import("../log.zig");
 const log = Log.scoped(.stats);
-const net_log = Log.scoped(.network);
 const console_log = Log.scoped(.console);
 
 const report_interval_s = 60;
-const metrics_timeout_ms = 2_000;
-const max_metrics_request = 2048;
 
 gpa: std.mem.Allocator,
 io: std.Io,
@@ -211,7 +208,7 @@ pub fn run(self: *Workers) !void {
     defer if (keys_task) |*task| task.cancel(self.io);
     var console_task: ?std.Io.Future(void) = if (self.console) try self.io.concurrent(readConsole, .{self}) else null;
     defer if (console_task) |*task| task.cancel(self.io);
-    var metrics_task: ?std.Io.Future(void) = if (self.metrics != null) try self.io.concurrent(serveMetrics, .{self}) else null;
+    var metrics_task: ?std.Io.Future(void) = if (self.metrics) |*server| try self.io.concurrent(Metrics.serve, .{ self.io, self.gpa, server, self }) else null;
     defer if (metrics_task) |*task| task.cancel(self.io);
 
     for (tasks) |*task| task.await(self.io);
@@ -296,71 +293,6 @@ fn pluginLine(w: *std.Io.Writer, name: []const u8, plugin: []const u8, amount: a
     try w.print("bifrost_{s}{{plugin=\"", .{name});
     try Metrics.label(w, plugin);
     try w.print("\"}} {d}\n", .{amount});
-}
-
-fn serveMetrics(self: *Workers) void {
-    const server = &self.metrics.?;
-    net_log.info("Metrics on http://{f}/metrics", .{server.socket.address});
-    if (!isLoopback(server.socket.address)) net_log.warn("Metrics have no authentication and listen beyond this machine; firewall {f}", .{server.socket.address});
-    while (true) {
-        const stream = server.accept(self.io) catch |err| switch (err) {
-            error.Canceled => return,
-            else => {
-                net_log.warn("Metrics listener can't accept: {t}", .{err});
-                self.io.sleep(.fromMilliseconds(100), .awake) catch return;
-                continue;
-            },
-        };
-        defer stream.close(self.io);
-        self.answerMetrics(stream) catch |err| switch (err) {
-            error.Canceled => return,
-            else => net_log.debug("Metrics request failed: {t}", .{err}),
-        };
-    }
-}
-
-fn isLoopback(address: std.Io.net.IpAddress) bool {
-    return switch (address) {
-        .ip4 => |ip| ip.bytes[0] == 127,
-        .ip6 => |ip| std.mem.eql(u8, &ip.bytes, &(@as([15]u8, @splat(0)) ++ [_]u8{1})),
-    };
-}
-
-// One client at a time with one deadline for the whole exchange, so a stuck or trickling scraper can't hold it
-fn answerMetrics(self: *Workers, stream: std.Io.net.Stream) !void {
-    const timeout = (std.Io.Timeout{ .duration = .{ .raw = .fromMilliseconds(metrics_timeout_ms), .clock = .awake } }).toDeadline(self.io);
-    var request: [max_metrics_request]u8 = undefined;
-    var len: usize = 0;
-    while (std.mem.indexOf(u8, request[0..len], "\r\n\r\n") == null) {
-        if (len == request.len) return error.RequestTooLarge;
-        var data = [_][]u8{request[len..]};
-        const read = try (try operate(self.io, .{ .net_read = .{ .socket_handle = stream.socket.handle, .data = &data } }, timeout)).net_read;
-        if (read.data_len == 0) return error.EndOfStream;
-        len += read.data_len;
-    }
-    var body: std.Io.Writer.Allocating = .init(self.gpa);
-    defer body.deinit();
-    const found = std.mem.startsWith(u8, request[0..len], "GET /metrics ") or std.mem.startsWith(u8, request[0..len], "GET /metrics?");
-    if (found) try self.writeMetrics(&body.writer) else try body.writer.writeAll("not found\n");
-    var head: [160]u8 = undefined;
-    const status = if (found) "200 OK" else "404 Not Found";
-    const header = try std.fmt.bufPrint(&head, "HTTP/1.1 {s}\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, body.written().len });
-    for ([_][]const u8{ header, body.written() }) |part| {
-        var rest = part;
-        while (rest.len != 0) {
-            const wrote = try (try operate(self.io, .{ .net_write = .{ .socket_handle = stream.socket.handle, .data = &.{rest} } }, timeout)).net_write;
-            rest = rest[wrote..];
-        }
-    }
-    stream.shutdown(self.io, .send) catch {};
-}
-
-// ZIO has timeouts, the threaded test Io doesn't and refuses before starting the operation
-fn operate(io: std.Io, operation: std.Io.Operation, timeout: std.Io.Timeout) !std.Io.Operation.Result {
-    return io.operateTimeout(operation, timeout) catch |err| switch (err) {
-        error.ConcurrencyUnavailable => io.operate(operation),
-        else => err,
-    };
 }
 
 // An idle proxy only reports at debug, so a quiet server's log stays quiet

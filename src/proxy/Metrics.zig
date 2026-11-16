@@ -1,6 +1,11 @@
 const std = @import("std");
 const clock = @import("../clock.zig");
 
+const log = @import("../log.zig").scoped(.network);
+
+const request_timeout_ms = 2_000;
+const max_request = 2048;
+
 pub const Histogram = struct {
     // Bucket i holds samples up to 2^i microseconds, the last one everything slower
     pub const buckets = 24;
@@ -60,6 +65,71 @@ pub fn histogram(w: *std.Io.Writer, name: []const u8, help: []const u8, h: *cons
     try w.print("bifrost_{s}_bucket{{le=\"+Inf\"}} {d}\n", .{ name, cumulative });
     try w.print("bifrost_{s}_sum {d}\n", .{ name, @as(f64, @floatFromInt(h.sum_us)) / std.time.us_per_s });
     try w.print("bifrost_{s}_count {d}\n", .{ name, cumulative });
+}
+
+/// Answers `GET /metrics` with what `source.writeMetrics` prints, until canceled.
+pub fn serve(io: std.Io, gpa: std.mem.Allocator, server: *std.Io.net.Server, source: anytype) void {
+    log.info("Metrics on http://{f}/metrics", .{server.socket.address});
+    if (!isLoopback(server.socket.address)) log.warn("Metrics have no authentication and listen beyond this machine; firewall {f}", .{server.socket.address});
+    while (true) {
+        const stream = server.accept(io) catch |err| switch (err) {
+            error.Canceled => return,
+            else => {
+                log.warn("Metrics listener can't accept: {t}", .{err});
+                io.sleep(.fromMilliseconds(100), .awake) catch return;
+                continue;
+            },
+        };
+        defer stream.close(io);
+        answer(io, gpa, stream, source) catch |err| switch (err) {
+            error.Canceled => return,
+            else => log.debug("Metrics request failed: {t}", .{err}),
+        };
+    }
+}
+
+fn isLoopback(address: std.Io.net.IpAddress) bool {
+    return switch (address) {
+        .ip4 => |ip| ip.bytes[0] == 127,
+        .ip6 => |ip| std.mem.eql(u8, &ip.bytes, &(@as([15]u8, @splat(0)) ++ [_]u8{1})),
+    };
+}
+
+// One client at a time with one deadline for the whole exchange, so a stuck or trickling scraper can't hold it
+fn answer(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.Stream, source: anytype) !void {
+    const timeout = (std.Io.Timeout{ .duration = .{ .raw = .fromMilliseconds(request_timeout_ms), .clock = .awake } }).toDeadline(io);
+    var request: [max_request]u8 = undefined;
+    var len: usize = 0;
+    while (std.mem.indexOf(u8, request[0..len], "\r\n\r\n") == null) {
+        if (len == request.len) return error.RequestTooLarge;
+        var data = [_][]u8{request[len..]};
+        const read = try (try operate(io, .{ .net_read = .{ .socket_handle = stream.socket.handle, .data = &data } }, timeout)).net_read;
+        if (read.data_len == 0) return error.EndOfStream;
+        len += read.data_len;
+    }
+    var body: std.Io.Writer.Allocating = .init(gpa);
+    defer body.deinit();
+    const found = std.mem.startsWith(u8, request[0..len], "GET /metrics ") or std.mem.startsWith(u8, request[0..len], "GET /metrics?");
+    if (found) try source.writeMetrics(&body.writer) else try body.writer.writeAll("not found\n");
+    var head: [160]u8 = undefined;
+    const status = if (found) "200 OK" else "404 Not Found";
+    const response = try std.fmt.bufPrint(&head, "HTTP/1.1 {s}\r\nContent-Type: text/plain; version=0.0.4; charset=utf-8\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, body.written().len });
+    for ([_][]const u8{ response, body.written() }) |part| {
+        var rest = part;
+        while (rest.len != 0) {
+            const wrote = try (try operate(io, .{ .net_write = .{ .socket_handle = stream.socket.handle, .data = &.{rest} } }, timeout)).net_write;
+            rest = rest[wrote..];
+        }
+    }
+    stream.shutdown(io, .send) catch {};
+}
+
+// ZIO has timeouts, the threaded test Io doesn't and refuses before starting the operation
+fn operate(io: std.Io, operation: std.Io.Operation, timeout: std.Io.Timeout) !std.Io.Operation.Result {
+    return io.operateTimeout(operation, timeout) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => io.operate(operation),
+        else => err,
+    };
 }
 
 pub fn label(w: *std.Io.Writer, text: []const u8) !void {

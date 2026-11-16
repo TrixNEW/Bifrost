@@ -1,6 +1,6 @@
 # Known issues
 
-What's open as of 2.0.0-rc.15. Details live in the linked docs.
+What's open as of 2.0.0-rc.16. Details live in the linked docs.
 
 ## Not yet verified
 
@@ -40,8 +40,12 @@ What's open as of 2.0.0-rc.15. Details live in the linked docs.
   | 512 B round trips (one player) | 2,712/s | 5,076/s |
   | joins | 140 to 170/s | 1,149/s |
 
-  Each player also costs about 380 KiB of resident memory, and past two workers the shared libdatachannel
-  threads (`[nethernet] threads`) cap throughput, not Bifrost's workers. See `tests/bench/baseline.md`.
+  Each player also costs about 320 KiB of resident memory. libdatachannel sends inline, one UDP datagram and one
+  DTLS record per message on the calling worker, and that is where a worker's CPU goes: stack samples of a busy
+  worker found it in the kernel's `sendto`, usrsctp or mbedTLS every time and never in Bifrost's own code. One
+  worker carries about 500 players at 20 messages a second each. A second worker helps; past that a loopback
+  benchmark stops gaining, with every thread in the proxy at half a core or less, and a larger
+  `[nethernet] threads` pool doesn't change that reliably. See `tests/bench/baseline.md`.
 - **Transfers rebuild only part of the target's StartGame.** Its time, difficulty, commands flag, game rules and
   weather are sent as their own packets; other world settings in it (world spawn, default game mode, experiments)
   only reach the client if the target sends them again. Volume entities and NPC dialogue the old backend opened

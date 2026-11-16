@@ -1490,3 +1490,74 @@ on Linux in ReleaseSafe (361 of 361) and Debug. One Linux Debug run hung in a si
 on the same machine; the test wasn't identified, and two later Linux Debug runs didn't hang. Another Linux Debug run
 failed "a player skips several dead backends" under the same load; every dial in that test, the live one included,
 gets 500 ms, which a Debug P-384 handshake under load can exceed. A real client and TSan were not run.
+
+## Overhaul, 2.0.0-rc.16
+
+ReleaseFast, 12 threads. One rc.16 driver ran the rc.15 proxy (`2f1d877`) and the rc.16 proxy through `--proxy-exe`,
+alternating. This pass fixed bugs and reorganised code; nothing in it targets the relay path, so these runs are
+here to show that nothing got slower and to find where the time actually goes.
+
+`-- relay --quick`, round trips/s, rc.15 / rc.16:
+
+| payload | load | Windows 11, round 1 | round 2 | WSL2 Ubuntu 24.04, round 1 | round 2 |
+|---|---|---|---|---|---|
+| 64 B | 1x1 | 1968 / 1848 | 1922 / 1964 | 1372 / 1296 | 1172 / 1406 |
+| 64 B | 8x32 | 8292 / 7902 | 7112 / 7986 | 14054 / 13712 | 12608 / 13926 |
+| 512 B | 1x1 | 1860 / 1798 | 1852 / 1850 | 1356 / 1084 | 1062 / 1372 |
+| 512 B | 8x32 | 7522 / 8280 | 8620 / 8564 | 14036 / 12546 | 8340 / 13934 |
+| 8 KiB | 1x1 | 360 / 422 | 438 / 424 | 478 / 410 | 474 / 480 |
+| 8 KiB | 8x32 | 734 / 974 | 1040 / 972 | 1432 / 1122 | 1346 / 1492 |
+| 20 KiB | 1x1 | 188 / 200 | 198 / 212 | 246 / 198 | 210 / 232 |
+| 20 KiB | 8x12 | 410 / 408 | 408 / 400 | 670 / 602 | 660 / 660 |
+
+Each build wins about as often as it loses in every row, so the difference is run-to-run noise. Both stay at 0
+allocations per round trip. `-- managed --quick` on Linux, two rounds each, shows the same: no row where one build
+is ahead both times.
+
+`-- scale` on Linux, one worker, rc.15 / rc.16:
+
+| players | RSS/player | idle CPU | active CPU | messages/s | RTT p50 ms |
+|---|---|---|---|---|---|
+| 50 | 417 / 415 KiB | 1.1% / 0.8% | 19.6% / 16.8% | 743 / 743 | 5.32 / 5.24 |
+| 100 | 367 / 366 KiB | 1.1% / 1.2% | 29.6% / 30.8% | 1421 / 1424 | 5.30 / 5.30 |
+| 250 | 336 / 334 KiB | 3.3% / 3.0% | 76.7% / 86.9% | 3406 / 3397 | 10.50 / 10.70 |
+| 500 | 324 / 324 KiB | 7.7% / 6.2% | 131.4% / 121.7% | 5383 / 5386 | 22.46 / 21.98 |
+| 1000 | 319 / 319 KiB | 18.2% / 17.9% | 146.4% / 155.1% | 7578 / 7575 | 106 / 213 |
+
+One run each, so the CPU columns are within noise. Memory per player is unchanged.
+
+### Where the time goes
+
+`-- workers` on Linux (64 players, 512 B, 8 in flight each, 4 backends), round trips/s, and the proxy's threads over
+2 s windows while it ran (`top -H`, share of one core):
+
+| workers | rc.15 | rc.16 | rc.16, 8 pool threads | each Bifrost worker | `juice poll` | each of 4 `RTC worker` |
+|---|---|---|---|---|---|---|
+| 1 | 13140 | 13454 | 13901 | 80 to 94% | 43 to 52% | 35 to 39% |
+| 2 | 13242 | 13633 | 17639 | 54% | 52% | 35 to 38% |
+| 4 | 16009 | 13782 | 16625 | 30 to 32% | 47 to 52% | 36 to 42% |
+| 8 | 14797 | 15552 | 16729 | 16 to 18% | 50% | 41 to 42% |
+
+Stack samples of the one-worker relay proxy (gdb stopping it every 40 ms, 242 stops, 58 of them with the worker
+running): 62% of the worker's busy samples were in the kernel sending a UDP datagram through libjuice, 16% in usrsctp,
+8% in mbedTLS and the rest in libdatachannel. None were in Bifrost's or nethernet's Zig code.
+
+- libdatachannel sends inline: every `send` runs SCTP, DTLS and one `sendto` on the calling thread, one datagram
+  per message. That is what a worker's CPU is spent on, which is why a single worker is the first thing to fill up
+  and why the second worker helps.
+- Past two workers nothing in the proxy is busy: each worker is at a third of a core or less, the one libjuice
+  thread that receives every datagram at half, the pool at 40%. What's left is the benchmark driver, which carries
+  the same traffic for both players and backends in one process, so that is most likely what sets the number
+  from there.
+- A bigger libdatachannel pool (`BIFROST_NETHERNET_THREADS`, the bench's stand-in for `[nethernet] threads`) was
+  ahead once on Linux at 2 to 8 workers and behind on Windows, where `-- workers --quick` gave, per worker count
+  1 / 2 / 4 / 8: default 10784, 9060 / 12624, 11054 / 12578, 13114 / 13512, 12142; 8 threads 10106, 9064 /
+  8314, 9544 / 9868, 11838 / 9814, 11692; 12 threads 10072, 11040 / 10830, 11106 / 11286, 8922 / 11274, 11780.
+  Not enough to change the default of up to four.
+- New players now go to the worker holding the fewest instead of the next in turn. With a fresh proxy that is the
+  same even split as before (the players-per-worker column is unchanged); it only matters once sessions of
+  different lengths have left workers uneven.
+
+So the cost of a player is one syscall and one DTLS record per message each way, inside libdatachannel, and
+`-- scale` shows what that buys: one worker carries about 500 players at 20 messages a second each. Cutting it
+needs datagram batching in libjuice or SCTP bundling across a worker's turn, not anything in Bifrost.

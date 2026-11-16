@@ -528,9 +528,11 @@ fn pumpBackend(self: *Link) void {
         return self.fail(err);
     }
     if (self.transfer) |transfer| if (self.session) |*session| transfer.syncClient(self.transferHost(session)) catch |err| return self.fail(err);
-    if (paused and self.stalled()) return self.pause();
+    const waiting = paused and self.stalled();
+    // Only a player who is behind starts the slow-player clock. A full transfer hold empties on the client's ack.
+    if (waiting and self.playerBacklogged()) return self.pause();
     self.backlogged_since_ms = null;
-    if (!drained) self.env.scheduler.schedule(self);
+    if (!drained and !waiting) self.env.scheduler.schedule(self);
 }
 
 // A backend's Transfer to another backend waits for any transfer underway and for the player to be in game. A kick
@@ -603,7 +605,8 @@ pub fn checkDeadlines(self: *Link, now_ms: u64) void {
         if (now_ms -| since >= deadlines.slow_player_ms) return self.playerGone();
     }
     if (self.backlogged_since_ms) |since| {
-        if (now_ms -| since >= deadlines.slow_player_ms) {
+        // The backend can be gone by now, and then nothing else clears a stamp the player has since caught up on
+        if (now_ms -| since >= deadlines.slow_player_ms and self.playerBacklogged()) {
             self.env.stats.bump(.slow_players, 1);
             self.ending("connection too slow to keep up", null);
             _ = self.disconnect("Connection too slow");

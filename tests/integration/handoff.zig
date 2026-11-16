@@ -299,14 +299,15 @@ test "a target spawn before the client acks waits for the ack" {
 
 test "a target that floods during the switch is paused, not failed" {
     var rig: Rig = undefined;
-    try rig.start(.{ .b = .chatter });
+    // A client still loading the new dimension isn't a slow connection, however short that limit is
+    try rig.start(.{ .b = .chatter, .slow_player_timeout_ms = 300 });
     defer rig.deinit();
     rig.player.hold_acks = true;
 
     try rig.transfer(1);
     try waitForChanges(&rig, 1);
-    try pumpFor(rig.player, 2_000);
-    try std.testing.expect(rig.stats().backlog_pauses >= 1);
+    try pumpFor(rig.player, 2_500);
+    try std.testing.expectEqual(@as(u64, 0), rig.stats().slow_players);
     try std.testing.expectEqual(@as(u64, 0), rig.stats().transfers_failed_after_commit);
 
     try rig.player.releaseAcks();

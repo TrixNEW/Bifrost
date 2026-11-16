@@ -51,7 +51,7 @@ one TURN server share it, and IPv6 players share their /64. A player whose addre
 | the same queues, all players together | whole proxy | `total_pending_bytes` | 256 MiB |
 | one NetherNet message | per connection | fixed | 2 MiB |
 | received messages not yet read | per connection | fixed | 512 KiB / 512 messages |
-| messages sent but not yet taken by the peer | per connection | fixed | 1 MiB, then reading stops (see below) |
+| messages sent but not yet taken by the peer | per connection | fixed | 1 MiB queued behind SCTP's own 1 MiB send buffer, then reading stops (see below) |
 | what SCTP had accepted when the peer closed while reading was paused | per connection | fixed | 1 MiB / 1024 messages |
 | Bedwire buffer pools | per worker | fixed, sized by the packet limits | 2.5 MiB for the passthrough observer |
 | plugin messages, posts, actions and injections | whole proxy / per plugin | fixed | 1024 / 256 items |
@@ -86,18 +86,22 @@ backend, get `BUSY`.
 
 ## Backpressure
 
-Once 1 MiB is waiting to go out to a player, Bifrost stops reading that player's backend until it drains to half.
+Once 1 MiB is queued for a player behind what SCTP itself holds (up to another 1 MiB), Bifrost stops reading that
+player's backend until the queue drains to half.
 The backend's receive queue then fills and SCTP stops taking from it, so its own flow control slows it down and
 nothing is dropped or reordered. Plugin injections to a peer that far behind get `BUSY`. A player still that far
 behind after `slow_player_timeout_ms` (5 s) is disconnected with "Connection too slow".
 
 The other way works the same: a backend that falls 1 MiB behind stops Bifrost reading from its player. Sends
 never fail for lack of room, because reading always stops before the native send buffer could fill. A link
-waiting on one side is woken by the transport the moment that side drains to half, nothing polls for it.
+waiting on one side is woken by the transport the moment that side drains to half; the once-a-second sweep only
+backs that up.
 
 During a transfer, what the target sends waits until the client is in its dimension. Once that hold reaches
 `pending_bytes` the target isn't read either, so its own flow control slows it down instead of the transfer
-failing, and the batch already on its way still fits.
+failing, and the batch already on its way still fits. A target held back this way doesn't start the player's
+`slow_player_timeout_ms` clock, since it's the client loading the new world that's being waited on, not its
+connection.
 
 Closing a connection waits, for up to 2 s, until the far end has acknowledged everything already sent, so a
 Disconnect reason or a player's last packets still arrive at the proxy and go on to the backend. A receive queue

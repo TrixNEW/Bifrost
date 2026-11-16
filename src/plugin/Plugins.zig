@@ -395,17 +395,9 @@ pub fn runCommand(self: *const Plugins, worker: u32, io: std.Io, player: abi.Pla
         .is_operator = @intFromBool(operator),
     };
     const started = clock.ns(io);
-    const outer = Work.enter();
-    const previous_worker = Work.worker;
-    const previous_context = Work.context;
-    Work.worker = worker;
-    Work.context = self;
-    defer {
-        Work.worker = previous_worker;
-        Work.context = previous_context;
-    }
+    const scope: Work.Scope = .enter(worker, self);
     command.callback(command.user, &request);
-    Work.hosted = outer;
+    scope.leave();
     self.timed(command.loaded, worker, io, started, "on command {s}", .{lower});
     return .ran;
 }
@@ -516,16 +508,8 @@ fn liveStatus(self: *Plugins, player: abi.Player, owner: ?Owner) abi.Status {
 }
 
 fn complete(self: *Plugins, then: *const Work.Done, status: abi.Status, owner: ?Owner) void {
-    const outer = Work.enter();
-    defer Work.hosted = outer;
-    const previous_worker = Work.worker;
-    const previous_context = Work.context;
-    Work.worker = if (owner) |at| at.worker else abi.no_worker;
-    Work.context = self;
-    defer {
-        Work.worker = previous_worker;
-        Work.context = previous_context;
-    }
+    const scope: Work.Scope = .enter(if (owner) |at| at.worker else abi.no_worker, self);
+    defer scope.leave();
     const result: abi.TaskResult = .{ .status = status, .worker = if (owner) |at| at.worker else abi.no_worker, .player = then.player };
     const started = if (owner) |at| clock.ns(at.io) else 0;
     then.done(then.user, &result);
@@ -600,16 +584,8 @@ fn addPacketHooks(self: *Plugins, loaded: *Loaded) !void {
 }
 
 pub fn emit(self: *const Plugins, event: *const abi.Event, decision: ?*abi.TransferDecision) void {
-    const outer = Work.enter();
-    defer Work.hosted = outer;
-    const previous_worker = Work.worker;
-    const previous_context = Work.context;
-    Work.worker = event.worker;
-    Work.context = self;
-    defer {
-        Work.worker = previous_worker;
-        Work.context = previous_context;
-    }
+    const scope: Work.Scope = .enter(event.worker, self);
+    defer scope.leave();
     for (self.subscribers[@backingInt(event.kind)].items) |subscriber| {
         const control = if (event.kind == .player_authenticated and subscriber.loaded != self.admission) null else decision;
         subscriber.callback(subscriber.user, event, control);

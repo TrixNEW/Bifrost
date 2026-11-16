@@ -135,15 +135,9 @@ fn dispatch(comptime fields: bool, table: *const Table, call: Call, id: u10, byt
     const range = table.ranges[id];
     if (range.len == 0) return .pass;
     std.debug.assert(scratch.len >= scratch_bytes);
-    const outer = Work.enter();
-    defer Work.hosted = outer;
-    const previous_worker = Work.worker;
-    const previous_context = Work.context;
-    Work.worker = call.worker;
-    defer {
-        Work.worker = previous_worker;
-        Work.context = previous_context;
-    }
+    // Each subscriber below runs as its own plugin
+    const scope: Work.Scope = .enter(call.worker, Work.context);
+    defer scope.leave();
 
     var current = bytes;
     var valid: ?bool = null;

@@ -16,6 +16,27 @@ pub fn enter() bool {
     return outer;
 }
 
+/// A plugin callback running on `on` for `owner`. Calls nest, so leaving restores whatever was running before.
+pub const Scope = struct {
+    hosted: bool,
+    worker: u32,
+    context: ?*const anyopaque,
+
+    pub fn enter(on: u32, owner: ?*const anyopaque) Scope {
+        const outer: Scope = .{ .hosted = hosted, .worker = worker, .context = context };
+        hosted = true;
+        worker = on;
+        context = owner;
+        return outer;
+    }
+
+    pub fn leave(outer: Scope) void {
+        hosted = outer.hosted;
+        worker = outer.worker;
+        context = outer.context;
+    }
+};
+
 pub const Done = struct {
     done: abi.TaskDoneFn,
     user: ?*anyopaque,

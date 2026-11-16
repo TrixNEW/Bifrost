@@ -47,7 +47,8 @@ pub fn sendAs(self: *Peer, bytes: []const u8, reliability: nethernet.Reliability
         self.connection.close();
         return err;
     };
-    self.buffered_bound +|= bytes.len;
+    // An empty message still queues its frame header, and zero has to mean nothing is queued
+    self.buffered_bound +|= @max(bytes.len, 1);
 }
 
 /// Borrowed until the next call. Null when nothing is waiting.

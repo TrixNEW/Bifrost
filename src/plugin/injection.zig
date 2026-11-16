@@ -266,7 +266,9 @@ test "native packet codec and injection fuzz round trips" {
                     try std.testing.expect(packet.header.sender_subclient == 0 and packet.header.target_subclient == 0);
                     switch (packet.value.typed) {
                         .text, .player_skin => {},
-                        .toast_request, .network_stack_latency => try std.testing.expect(target == .player),
+                        .toast_request, .network_stack_latency, .update_block, .set_actor_data, .inventory_slot => try std.testing.expect(target == .player),
+                        .correct_player_move_prediction => |correction| try std.testing.expect(target == .player and correction.prediction_type == .player and finite(correction)),
+                        .modal_form_request => |form| try std.testing.expect(target == .player and form.form_ui_json.len <= max_form_bytes and validJson(form.form_ui_json)),
                         .script_message => try std.testing.expect(target == .backend),
                         .request_chunk_radius => |radius| try std.testing.expect(target == .backend and radius.chunk_radius >= 0),
                         else => return error.UnsafeInjectionAccepted,

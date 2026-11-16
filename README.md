@@ -50,6 +50,7 @@ For Pterodactyl hosting, use the [Bifrost egg](https://github.com/Bedrock-Phanat
 - [Plugin Development](docs/plugins.md)
 - [Plugin API](docs/plugin-abi.md)
 - [Configuration & Limits](docs/limits.md)
+- [Architecture](docs/architecture.md)
 - [Testing](docs/testing.md)
 - [Known Issues](docs/known-issues.md)
 

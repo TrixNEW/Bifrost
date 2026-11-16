@@ -1,5 +1,13 @@
 # Running Bifrost
 
+## Startup
+
+`Bifrost ready in ...` comes once the signaling port is bound, measured on the monotonic clock from process start.
+On Linux, Bifrost can't start until the kernel has seeded its random number generator. Kernels before 5.4 on a VM
+without a hardware RNG may take hours after boot, so a server started with the machine logs `Waiting for the
+kernel's random number generator to be seeded` and stalls there. Add a virtio-rng device to the VM, or run haveged
+or rng-tools on the host.
+
 ## Console
 
 Bifrost reads commands from its standard input, which is where Pterodactyl's console and `docker attach` type.

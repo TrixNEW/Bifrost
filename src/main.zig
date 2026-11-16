@@ -36,6 +36,7 @@ pub fn main(init: std.process.Init) !void {
     // Prints straight to the console, so only a console at trace turns it on
     if (log_settings.level == .trace) bifrost.enableNativeTrace();
 
+    waitForEntropy(init.io);
     const rt = try zio.Runtime.init(init.gpa, .{ .executors = .exact(config.workers) });
     defer rt.deinit();
 
@@ -136,6 +137,20 @@ fn loadConfig(init: std.process.Init) bifrost.Config {
     };
     config_log.info("Loaded {s} ({d} backend{s}, {t} sessions, auth {t})", .{ config_path, config.backends().len, plural(config.backends().len), config.session_mode, config.auth });
     return config;
+}
+
+// zio seeds every executor with a blocking getrandom, which waits until the kernel has seeded its pool. A VM
+// without a hardware RNG on a kernel older than 5.4 can take hours to get there after boot
+fn waitForEntropy(io: std.Io) void {
+    if (builtin.os.tag != .linux) return;
+    const linux = std.os.linux;
+    const nonblock = 1;
+    var byte: [1]u8 = undefined;
+    if (linux.errno(linux.getrandom(&byte, 1, nonblock)) != .AGAIN) return;
+    log.warn("Waiting for the kernel's random number generator to be seeded; give the VM a hardware RNG (virtio-rng) or run haveged or rng-tools on the host", .{});
+    const waiting = std.Io.Clock.awake.now(io);
+    while (linux.errno(linux.getrandom(&byte, 1, 0)) == .INTR) {}
+    log.info("Random number generator seeded after {f}", .{bifrost.log.elapsed(sinceMs(io, waiting))});
 }
 
 fn sinceMs(io: std.Io, started: std.Io.Timestamp) u64 {

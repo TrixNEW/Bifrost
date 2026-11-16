@@ -66,6 +66,8 @@ pub fn backlogged(self: *Peer, mark: usize) bool {
 }
 
 pub fn buffered(self: *Peer) usize {
+    // Nothing went out since the queue was last seen empty, so an idle peer costs no native call
+    if (self.buffered_bound == 0) return 0;
     self.buffered_bound = self.connection.bufferedAmount() catch 0;
     return self.buffered_bound;
 }

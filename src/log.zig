@@ -205,10 +205,11 @@ fn emit(level: Level, name: []const u8, text: []const u8, always: bool) void {
     const io = std.Options.debug_io;
     const prev = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(prev);
-    const time = Time.now(io);
     var buffer: [256]u8 = undefined;
     const stderr = io.lockStderr(&buffer, null) catch unreachable;
     defer io.unlockStderr();
+    // Read under the lock, so lines from different threads come out in timestamp order
+    const time = Time.now(io);
     var terminal = stderr.terminal();
     switch (state.color) {
         .auto => {},

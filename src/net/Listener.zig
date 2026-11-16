@@ -2,7 +2,6 @@ const std = @import("std");
 const nethernet = @import("nethernet");
 const NetherNet = @import("NetherNet.zig");
 
-/// Answers HTTP signaling and hands every established connection to `sink`.
 const Listener = @This();
 
 pub const Sink = struct {

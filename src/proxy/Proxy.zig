@@ -24,7 +24,7 @@ const Metrics = @import("Metrics.zig");
 const trace = @import("../trace.zig");
 const clock = @import("../clock.zig");
 
-/// One worker. Owns its links and runs them on one task; other threads only reach it through the mailbox.
+/// One worker. Owns its links and runs them on one task; other threads only queue work for it.
 const Proxy = @This();
 const log = @import("../log.zig").scoped(.player);
 const console_log = @import("../log.zig").scoped(.console);

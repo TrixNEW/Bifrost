@@ -232,7 +232,6 @@ test "least_players fills the emptiest backend and claims respect max_players" {
     for (0..4) |_| _ = router.claim(none, false).?;
     try std.testing.expectEqual(@as(u32, 2), health.proxied(.of(0)));
     try std.testing.expectEqual(@as(u32, 2), health.proxied(.of(1)));
-    // The first backend is full, so the rest go to the second
     for (0..2) |_| try std.testing.expectEqual(@as(?Backend.Id, .of(1)), router.claim(none, false));
     router.release(.of(0));
     try std.testing.expectEqual(@as(?Backend.Id, .of(0)), router.claim(none, false));

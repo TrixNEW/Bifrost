@@ -151,7 +151,6 @@ fn dialToken(self: *const NetherNet, now: i64) ![]u8 {
     return self.gpa.dupe(u8, cache.text);
 }
 
-/// Which stage a dial or connection failed in, in words an operator can act on.
 pub fn describe(err: anyerror) []const u8 {
     return switch (err) {
         error.ConnectionRefused => "signaling refused, nothing listens on that port",

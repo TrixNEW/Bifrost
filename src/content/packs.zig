@@ -10,10 +10,6 @@ pub const Fingerprint = struct {
     info: ?u64 = null,
     stack: ?u64 = null,
 
-    pub fn complete(self: Fingerprint) bool {
-        return self.info != null and self.stack != null;
-    }
-
     pub fn eql(self: Fingerprint, other: Fingerprint) bool {
         return self.info == other.info and self.stack == other.stack;
     }

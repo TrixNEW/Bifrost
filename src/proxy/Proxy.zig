@@ -270,26 +270,22 @@ fn drainMailbox(self: *Proxy) void {
 }
 
 fn startTransfer(self: *Proxy, request: TransferRequest) void {
-    const found = self.findLink(request.player) orelse return self.rejectTransfer(request, error.UnknownPlayer);
+    const found = self.links.get(request.player) orelse return self.rejectTransfer(request, error.UnknownPlayer);
     found.requestTransfer(request.target) catch |err| self.rejectTransfer(request, err);
 }
 
 pub fn message(self: *Proxy, link_id: u64, text: []const u8) void {
-    const link = self.findLink(link_id) orelse return;
+    const link = self.links.get(link_id) orelse return;
     link.sendMessage(text) catch |err| log.debug("Plugin message to {f} dropped: {t}", .{ link.who(), err });
 }
 
-fn findLink(self: *Proxy, id: u64) ?*Link {
-    return self.links.get(id);
-}
-
 pub fn packet(self: *Proxy, link_id: u64, target: abi.PacketTarget, bytes: []const u8) abi.Status {
-    const link = self.findLink(link_id) orelse return .stale_handle;
+    const link = self.links.get(link_id) orelse return .stale_handle;
     return link.sendPacket(target, bytes);
 }
 
 pub fn action(self: *Proxy, link_id: u64, disconnect: bool, backend: u32, reason: []const u8) abi.Status {
-    const link = self.findLink(link_id) orelse return .stale_handle;
+    const link = self.links.get(link_id) orelse return .stale_handle;
     if (disconnect) return link.disconnect(reason);
     if (backend == abi.no_backend) return link.resumeLogin();
     if (backend >= self.router.backends.len) return .invalid_argument;
@@ -305,7 +301,7 @@ pub fn action(self: *Proxy, link_id: u64, disconnect: bool, backend: u32, reason
 
 fn routeNetwork(context: *anyopaque, link_id: u64, target: abi.PacketTarget, out: *abi.NetworkStats) abi.Status {
     const self: *Proxy = @ptrCast(@alignCast(context));
-    const link = self.findLink(link_id) orelse return .too_late;
+    const link = self.links.get(link_id) orelse return .too_late;
     return link.networkStats(target, out);
 }
 
@@ -325,7 +321,7 @@ fn routeGameplay(context: *anyopaque, link_id: u64, query: Handles.Query) abi.St
         }
         return .ok;
     }
-    const link = self.findLink(link_id) orelse return .too_late;
+    const link = self.links.get(link_id) orelse return .too_late;
     if (query == .client_data or query == .set_client_data) {
         const managed = link.managed orelse return .unsupported;
         const json = managed.client_data orelse return .too_late;
@@ -359,7 +355,7 @@ fn routeTransfer(context: *anyopaque, link: u64, backend: u32) abi.Status {
 fn rejectTransfer(self: *Proxy, request: TransferRequest, err: anyerror) void {
     const target = if (request.target.index() < self.router.backends.len) self.router.get(request.target).name() else "an unknown backend";
     // The requesting plugin already hears why, so this is only for debugging
-    if (self.findLink(request.player)) |link|
+    if (self.links.get(request.player)) |link|
         transfer_log.debug("Not moving {f} to {s}: {t}", .{ link.who(), target, err })
     else
         transfer_log.debug("Not moving player {d} to {s}: {t}", .{ request.player, target, err });
@@ -423,7 +419,7 @@ fn turn(self: *Proxy) void {
         var buffered: u64 = 0;
         for (self.links.values()) |link| {
             link.checkDeadlines(now_ms);
-            buffered += link.sampleTransport();
+            if (link.session) |*session| buffered += session.buffered();
         }
         self.stats.set(.player_buffered_bytes, buffered);
         self.stats.set(.links_active, self.links.count());

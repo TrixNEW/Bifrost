@@ -585,13 +585,6 @@ pub fn playerBacklogged(self: *Link) bool {
     return session.backlogged(@as(usize, backlog_bytes) >> shift);
 }
 
-// Worker only, once a second
-pub fn sampleTransport(self: *Link) u64 {
-    if (self.session == null) return 0;
-    const session = &self.session.?;
-    return session.buffered();
-}
-
 pub fn checkDeadlines(self: *Link, now_ms: u64) void {
     if (self.backend) |backend| if (backend.closing_since_ms != null) self.env.scheduler.schedule(self);
     if (self.session == null) return;

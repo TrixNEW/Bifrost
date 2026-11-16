@@ -317,7 +317,7 @@ fn on(self: *Transfer, host: Host, event: State.Event) void {
     if (step.action != .commit) self.publish(host);
     self.record(host.stats, step);
     switch (step.action) {
-        .none, .stale => {},
+        .none => {},
         .prepare_client => return self.on(host, .client_prepared),
         .commit => self.commit(host) catch |err| {
             log.debug("Transfer {d} commit failed: {t}", .{ self.state.epoch, err });

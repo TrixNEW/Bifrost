@@ -34,7 +34,6 @@ pub const Event = enum {
 
 pub const Action = enum {
     none,
-    stale,
     prepare_client,
     commit,
     close_source,
@@ -78,11 +77,6 @@ pub fn nextDeadline(self: *const State) u64 {
 
 pub fn expired(self: *const State, now_ns: u64) bool {
     return now_ns >= self.nextDeadline();
-}
-
-pub fn applyFrom(self: *State, epoch: Epoch, event: Event, now_ns: u64) Step {
-    if (epoch != self.epoch) return .{ .action = .stale };
-    return self.apply(event, now_ns);
 }
 
 pub fn apply(self: *State, event: Event, now_ns: u64) Step {
@@ -191,14 +185,6 @@ test "out of order events count as a failed target" {
             try std.testing.expectEqual(if (phase.committed()) Action.disconnect else Action.roll_back, step.action);
         }
     }
-}
-
-test "events from an older transfer are ignored" {
-    var state: State = .init(2, test_limits, 0);
-    try std.testing.expectEqual(Action.stale, state.applyFrom(1, .dialed, 0).action);
-    try std.testing.expectEqual(Phase.dialing, state.phase);
-    try std.testing.expectEqual(Action.none, state.applyFrom(2, .dialed, 0).action);
-    try std.testing.expectEqual(Phase.logging_in, state.phase);
 }
 
 test "each phase gets its own deadline under the overall one" {

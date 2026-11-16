@@ -97,7 +97,3 @@ pub fn drained(self: *Peer, now_ms: u64) bool {
 pub fn identityKey(self: *const Peer) ?NetherNet.PublicKey {
     return self.connection.public_key;
 }
-
-pub fn remoteAddress(self: *const Peer) ?std.Io.net.IpAddress {
-    return NetherNet.remoteAddress(self.connection);
-}

@@ -97,10 +97,6 @@ pub fn deinit(self: *NetherNet) void {
     self.gpa.destroy(self.token);
 }
 
-pub fn verifies(self: *const NetherNet) bool {
-    return self.issuer != null;
-}
-
 pub fn serverOptions(self: *NetherNet) nethernet.ConnectionOptions {
     return .{
         .native = self.native,

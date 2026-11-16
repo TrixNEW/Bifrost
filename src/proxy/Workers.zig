@@ -208,7 +208,7 @@ pub fn run(self: *Workers) !void {
     defer if (keys_task) |*task| task.cancel(self.io);
     var console_task: ?std.Io.Future(void) = if (self.console) try self.io.concurrent(readConsole, .{self}) else null;
     defer if (console_task) |*task| task.cancel(self.io);
-    var metrics_task: ?std.Io.Future(void) = if (self.metrics) |*server| try self.io.concurrent(Metrics.serve, .{ self.io, self.gpa, server, self }) else null;
+    var metrics_task: ?std.Io.Future(void) = if (self.metrics != null) try self.io.concurrent(serveMetrics, .{self}) else null;
     defer if (metrics_task) |*task| task.cancel(self.io);
 
     for (tasks) |*task| task.await(self.io);
@@ -331,6 +331,10 @@ fn report(self: *Workers) void {
         };
         if (level == .info) log.info(problems, counts) else log.debug(problems, counts);
     }
+}
+
+fn serveMetrics(self: *Workers) void {
+    Metrics.serve(self.io, self.gpa, &self.metrics.?, self);
 }
 
 fn readConsole(self: *Workers) void {

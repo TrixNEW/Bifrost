@@ -129,6 +129,14 @@ pub fn setField(self: *Handles, player: abi.Player, comptime field: std.meta.Fie
     @field(slot.info.state, @tagName(field)) = value;
 }
 
+pub fn setTransfer(self: *Handles, player: abi.Player, transfer: abi.TransferState, backend: u32) void {
+    self.enter();
+    defer self.leave();
+    _, const slot = self.find(player) orelse return;
+    slot.info.state.transfer = transfer;
+    slot.info.state.backend = backend;
+}
+
 pub fn copyInfo(self: *Handles, player: abi.Player, out: *abi.PlayerInfo) bool {
     const io, const started = copied: {
         self.enter();

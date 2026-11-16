@@ -356,9 +356,7 @@ pub fn pluginState(self: *const Transfer) abi.TransferState {
 
 fn publish(self: *const Transfer, host: Host) void {
     const plugins = host.events.plugins orelse return;
-    const player = host.managed.plugin_player;
-    plugins.handles.setField(player, .transfer, self.pluginState());
-    plugins.handles.setField(player, .backend, if (self.state.phase.committed()) @intCast(self.target.index()) else host.source_backend);
+    plugins.handles.setTransfer(host.managed.plugin_player, self.pluginState(), if (self.state.phase.committed()) @intCast(self.target.index()) else host.source_backend);
 }
 
 fn commit(self: *Transfer, host: Host) !void {

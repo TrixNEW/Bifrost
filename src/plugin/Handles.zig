@@ -1,6 +1,7 @@
 const std = @import("std");
 const clock = @import("../clock.zig");
 const abi = @import("abi.zig");
+const Spin = @import("Spin.zig");
 
 const Handles = @This();
 
@@ -36,7 +37,7 @@ const Slot = struct {
     connected_ns: u64 = 0,
 };
 
-lock: std.atomic.Value(bool) = .init(false),
+lock: Spin = .{},
 slots: std.ArrayList(Slot) = .empty,
 free: std.ArrayList(u32) = .empty,
 
@@ -47,8 +48,8 @@ pub fn deinit(self: *Handles, gpa: std.mem.Allocator) void {
 
 pub fn acquire(self: *Handles, gpa: std.mem.Allocator, to: Route) !abi.Player {
     const connected_ns = if (to.io) |io| clock.ns(io) else 0;
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     try self.free.ensureTotalCapacity(gpa, self.slots.items.len + 1);
     const index = self.free.pop() orelse index: {
         if (self.slots.items.len == std.math.maxInt(u32)) return error.TooManyPlayers;
@@ -64,8 +65,8 @@ pub fn acquire(self: *Handles, gpa: std.mem.Allocator, to: Route) !abi.Player {
 }
 
 pub fn release(self: *Handles, player: abi.Player) void {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     const index, const slot = self.find(player) orelse return;
     slot.route = null;
     if (slot.generation == std.math.maxInt(u32)) return;
@@ -74,8 +75,8 @@ pub fn release(self: *Handles, player: abi.Player) void {
 }
 
 pub fn setName(self: *Handles, player: abi.Player, name: []const u8) void {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     _, const slot = self.find(player) orelse return;
     const len = @min(name.len, max_name_len);
     @memcpy(slot.name[0..len], name[0..len]);
@@ -83,8 +84,8 @@ pub fn setName(self: *Handles, player: abi.Player, name: []const u8) void {
 }
 
 pub fn copyName(self: *Handles, player: abi.Player, out: []u8) ?usize {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     _, const slot = self.find(player) orelse return null;
     const len = @min(out.len, slot.name_len);
     @memcpy(out[0..len], slot.name[0..len]);
@@ -92,15 +93,15 @@ pub fn copyName(self: *Handles, player: abi.Player, out: []u8) ?usize {
 }
 
 pub fn route(self: *Handles, player: abi.Player) ?Route {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     _, const slot = self.find(player) orelse return null;
     return slot.route;
 }
 
 pub fn setIdentity(self: *Handles, player: abi.Player, name: []const u8, xuid: []const u8, uuid: []const u8, online: bool) void {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     _, const slot = self.find(player) orelse return;
     slot.info.state.authentication = .authenticated;
     slot.name_len = @intCast(@min(name.len, max_name_len));
@@ -114,8 +115,8 @@ pub fn setIdentity(self: *Handles, player: abi.Player, name: []const u8, xuid: [
 }
 
 pub fn setState(self: *Handles, player: abi.Player, state: abi.PlayerState) ?abi.ConnectionPhase {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     _, const slot = self.find(player) orelse return null;
     const previous = slot.info.state.phase;
     slot.info.state = state;
@@ -123,15 +124,15 @@ pub fn setState(self: *Handles, player: abi.Player, state: abi.PlayerState) ?abi
 }
 
 pub fn setField(self: *Handles, player: abi.Player, comptime field: std.meta.FieldEnum(abi.PlayerState), value: @FieldType(abi.PlayerState, @tagName(field))) void {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     _, const slot = self.find(player) orelse return;
     @field(slot.info.state, @tagName(field)) = value;
 }
 
 pub fn setTransfer(self: *Handles, player: abi.Player, transfer: abi.TransferState, backend: u32) void {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     _, const slot = self.find(player) orelse return;
     slot.info.state.transfer = transfer;
     slot.info.state.backend = backend;
@@ -139,8 +140,8 @@ pub fn setTransfer(self: *Handles, player: abi.Player, transfer: abi.TransferSta
 
 pub fn copyInfo(self: *Handles, player: abi.Player, out: *abi.PlayerInfo) bool {
     const io, const started = copied: {
-        self.enter();
-        defer self.leave();
+        self.lock.lock();
+        defer self.lock.unlock();
         _, const slot = self.find(player) orelse return false;
         out.* = slot.info;
         break :copied .{ slot.route.?.io, slot.connected_ns };
@@ -152,8 +153,8 @@ pub fn copyInfo(self: *Handles, player: abi.Player, out: *abi.PlayerInfo) bool {
 /// A player online now, by display name in any case or by XUID.
 pub fn lookup(self: *Handles, name_or_xuid: []const u8) ?abi.Player {
     if (name_or_xuid.len == 0) return null;
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     // Names can repeat, say a player rejoining before their old session ends, so the newest wins
     var newest: ?u32 = null;
     for (self.slots.items, 0..) |*slot, index| {
@@ -168,8 +169,8 @@ pub fn lookup(self: *Handles, name_or_xuid: []const u8) ?abi.Player {
 
 /// Copies as many online players as fit and returns how many there are.
 pub fn list(self: *Handles, out: []abi.Player) usize {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     var total: usize = 0;
     for (self.slots.items, 0..) |*slot, index| {
         if (slot.route == null) continue;
@@ -180,8 +181,8 @@ pub fn list(self: *Handles, out: []abi.Player) usize {
 }
 
 pub fn invalidatePackets(self: *Handles, player: abi.Player) void {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     _, const slot = self.find(player) orelse return;
     slot.route.?.epoch +%= 1;
 }
@@ -196,14 +197,6 @@ fn find(self: *Handles, player: abi.Player) ?struct { u32, *Slot } {
 
 fn handle(index: u32, generation: u32) abi.Player {
     return .{ .id = @as(u64, generation) << 32 | (index + 1) };
-}
-
-fn enter(self: *Handles) void {
-    while (self.lock.cmpxchgWeak(false, true, .acquire, .monotonic) != null) std.atomic.spinLoopHint();
-}
-
-fn leave(self: *Handles) void {
-    self.lock.store(false, .release);
 }
 
 fn noTransfer(_: *anyopaque, _: u64, _: u32) abi.Status {

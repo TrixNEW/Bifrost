@@ -1,5 +1,6 @@
 const std = @import("std");
 const Work = @import("Work.zig");
+const Spin = @import("Spin.zig");
 const trace = @import("../trace.zig");
 
 const Pool = @This();
@@ -17,7 +18,7 @@ ring: []*Work.Task,
 head: usize = 0,
 len: usize = 0,
 stopping: std.atomic.Value(bool) = .init(false),
-lock: std.atomic.Value(bool) = .init(false),
+lock: Spin = .{},
 signal: std.atomic.Value(u32) = .init(0),
 
 pub fn create(gpa: std.mem.Allocator, threads: u32, capacity: u32, context: *anyopaque, run: *const fn (*anyopaque, *Work.Task) void) !*Pool {
@@ -45,28 +46,28 @@ pub fn destroy(self: *Pool) void {
 }
 
 pub fn submit(self: *Pool, task: *Work.Task) bool {
-    self.enter();
+    self.lock.lock();
     const accepted = !self.stopping.load(.monotonic) and self.len < self.ring.len;
     if (accepted) {
         self.ring[(self.head + self.len) % self.ring.len] = task;
         self.len += 1;
     }
-    self.leave();
+    self.lock.unlock();
     if (accepted) self.wake(1);
     return accepted;
 }
 
 pub fn stop(self: *Pool) void {
-    self.enter();
+    self.lock.lock();
     self.stopping.store(true, .release);
-    self.leave();
+    self.lock.unlock();
     self.wake(std.math.maxInt(u32));
     for (self.threads) |thread| thread.join();
 }
 
 pub fn take(self: *Pool) ?*Work.Task {
-    self.enter();
-    defer self.leave();
+    self.lock.lock();
+    defer self.lock.unlock();
     return self.pop();
 }
 
@@ -82,10 +83,10 @@ fn loop(self: *Pool) void {
     trace.threadName("plugin worker");
     while (true) {
         const seen = self.signal.load(.acquire);
-        self.enter();
+        self.lock.lock();
         const stopping = self.stopping.load(.monotonic);
         const task = if (stopping) null else self.pop();
-        self.leave();
+        self.lock.unlock();
         if (stopping) return;
         if (task) |next| {
             const span = trace.zone(@src(), "plugin task");
@@ -98,12 +99,4 @@ fn loop(self: *Pool) void {
 fn wake(self: *Pool, count: u32) void {
     _ = self.signal.fetchAdd(1, .release);
     io.futexWake(u32, &self.signal.raw, count);
-}
-
-fn enter(self: *Pool) void {
-    while (self.lock.cmpxchgWeak(false, true, .acquire, .monotonic) != null) std.atomic.spinLoopHint();
-}
-
-fn leave(self: *Pool) void {
-    self.lock.store(false, .release);
 }

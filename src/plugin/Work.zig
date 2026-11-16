@@ -2,6 +2,7 @@ const std = @import("std");
 const abi = @import("abi.zig");
 const Notify = @import("../net/Notify.zig");
 const Packets = @import("Packets.zig");
+const Spin = @import("Spin.zig");
 
 pub const max_message_bytes = 1024;
 
@@ -113,7 +114,7 @@ pub const Injection = struct {
 
 // Anyone can post, only the owning worker takes
 pub const Queue = struct {
-    lock: std.atomic.Value(bool) = .init(false),
+    lock: Spin = .{},
     items: std.ArrayList(Item) = .empty,
     taken: std.ArrayList(Item) = .empty,
     closed: bool = false,
@@ -134,34 +135,26 @@ pub const Queue = struct {
 
     // Callers bound the total, so this never grows
     pub fn post(self: *Queue, item: Item) bool {
-        self.enter();
+        self.lock.lock();
         const open = !self.closed;
         if (open) self.items.appendAssumeCapacity(item);
-        self.leave();
+        self.lock.unlock();
         if (open) if (self.notify) |notify| notify.send();
         return open;
     }
 
     pub fn close(self: *Queue) void {
-        self.enter();
+        self.lock.lock();
         self.closed = true;
-        self.leave();
+        self.lock.unlock();
     }
 
     pub fn take(self: *Queue) []const Item {
         self.taken.clearRetainingCapacity();
-        self.enter();
+        self.lock.lock();
         std.mem.swap(std.ArrayList(Item), &self.items, &self.taken);
-        self.leave();
+        self.lock.unlock();
         return self.taken.items;
-    }
-
-    fn enter(self: *Queue) void {
-        while (self.lock.cmpxchgWeak(false, true, .acquire, .monotonic) != null) std.atomic.spinLoopHint();
-    }
-
-    fn leave(self: *Queue) void {
-        self.lock.store(false, .release);
     }
 };
 

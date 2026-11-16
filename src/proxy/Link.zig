@@ -753,7 +753,7 @@ fn startTransfer(self: *Link, requested: Backend.Id) !void {
     const decision = self.env.events.transferRequested(self.player, self.backend_id.index(), requested.index());
     const target: Backend.Id = switch (decision.action) {
         .cancel => return error.CanceledByPlugin,
-        .redirect => .of(decision.backend),
+        .redirect => if (decision.backend < self.env.router.backends.len) .of(decision.backend) else return error.UnknownBackend,
         else => requested,
     };
     if (target.index() >= self.env.router.backends.len) return error.UnknownBackend;

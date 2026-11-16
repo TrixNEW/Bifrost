@@ -460,6 +460,23 @@ test "a transfer request can be redirected" {
     try std.testing.expectEqual(@as(u32, 1), Recorder.backend.load(.acquire));
 }
 
+test "a redirect to a backend that doesn't exist is refused" {
+    var plugins: bifrost.Plugins = try .init(gpa, &.{}, .{});
+    defer plugins.deinit();
+    try loadRecorder(&plugins);
+    Recorder.action = .redirect;
+    for ([_]u32{ abi.no_backend, 256, 2 }) |missing| {
+        Recorder.redirect_to = missing;
+        var rig: Rig = undefined;
+        try rig.start(.{ .plugins = &plugins });
+        defer rig.deinit();
+        try rig.transfer(1);
+        try rig.waitFor(.transfers_rejected, 1);
+        try rig.expectOn(&rig.a);
+        try std.testing.expectEqual(@as(u64, 0), rig.stats().transfers_started);
+    }
+}
+
 test "a failed transfer says why" {
     var plugins: bifrost.Plugins = try .init(gpa, &.{}, .{});
     defer plugins.deinit();

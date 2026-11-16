@@ -21,6 +21,7 @@ const Plugins = @import("../plugin/Plugins.zig");
 const Packets = Plugins.Packets;
 const abi = @import("../plugin/abi.zig");
 const trace = @import("../trace.zig");
+const clock = @import("../clock.zig");
 
 const protocol = @import("bedrock_protocol");
 const Current = protocol.Current;
@@ -272,7 +273,7 @@ fn idSwap(self: *const Managed) ?self_id.Swap {
 fn newBatch(self: *Managed, ends: Ends, to_player: bool) Batch {
     var batch: Batch = .{ .managed = self, .ends = ends, .to_player = to_player };
     const hooks = self.shared.hooks orelse return batch;
-    if (hooks.plugins.tracking.player) self.gameplay.now_ms = Packets.now(ends.io) / std.time.ns_per_ms;
+    if (hooks.plugins.tracking.player) self.gameplay.now_ms = clock.ms(ends.io);
     if (hooks.plugins.packetTable(if (to_player) .from_backend else .from_player)) |table| {
         if (self.player.state != .in_game or table.in_game) batch.table = table;
     }
@@ -595,7 +596,7 @@ pub fn fromPlayer(self: *Managed, ends: Ends, payload: []const u8) !void {
 }
 
 fn charge(self: *Managed, ends: Ends, bytes: usize) !void {
-    if (self.inbound.take(Packets.now(ends.io) / std.time.ns_per_ms, bytes)) return;
+    if (self.inbound.take(clock.ms(ends.io), bytes)) return;
     ends.stats.bump(.player_floods, 1);
     return error.Flooding;
 }
@@ -661,7 +662,7 @@ fn answerSettings(self: *Managed, ends: Ends, packet: bedwire.Packet) !void {
 }
 
 fn authenticate(self: *Managed, ends: Ends, packet: bedwire.Packet) !void {
-    if (self.shared.logins) |logins| if (!logins.take(Packets.now(ends.io) / std.time.ns_per_ms, 1)) {
+    if (self.shared.logins) |logins| if (!logins.take(clock.ms(ends.io), 1)) {
         ends.stats.bump(.logins_throttled, 1);
         self.sendDisconnect(ends, "Server is busy, try again shortly") catch {};
         return error.ServerBusy;

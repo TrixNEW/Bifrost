@@ -22,6 +22,7 @@ const Scheduler = @import("Scheduler.zig");
 const Stats = @import("Stats.zig");
 const Metrics = @import("Metrics.zig");
 const trace = @import("../trace.zig");
+const clock = @import("../clock.zig");
 
 /// One worker. Owns its links and runs them on one task, so nothing in here needs a lock.
 const Proxy = @This();
@@ -231,7 +232,7 @@ pub fn ask(self: *Proxy, request: Console.Request) bool {
 fn answer(self: *Proxy, request: Console.Request) void {
     var found: u32 = 0;
     defer request.reply.finish(self.io, found);
-    const now_ms = nowMs(self.io);
+    const now_ms = clock.ms(self.io);
     for (self.links.values()) |link| {
         if (!link.joined or !request.matches(link.name())) continue;
         found += 1;
@@ -382,9 +383,9 @@ fn drain(self: *Proxy) void {
         link.ending("proxy shutting down", null);
         _ = link.disconnect("Proxy shutting down");
     }
-    const deadline_ms = nowMs(self.io) + Peer.drain_timeout_ms;
+    const deadline_ms = clock.ms(self.io) + Peer.drain_timeout_ms;
     while (self.links.count() != 0) {
-        const now_ms = nowMs(self.io);
+        const now_ms = clock.ms(self.io);
         if (now_ms >= deadline_ms) return;
         self.scheduler.wake.waitTimeout(self.io, .{ .duration = .{ .raw = .fromMilliseconds(@min(deadline_ms - now_ms, 100)), .clock = .awake } }) catch |err| switch (err) {
             error.Timeout => {},
@@ -404,7 +405,7 @@ fn turn(self: *Proxy) void {
     };
     // Reset before checking, or we could miss a wake
     self.scheduler.wake.reset();
-    const busy_since = Metrics.nowNs(self.io);
+    const busy_since = clock.ns(self.io);
     defer self.timings.turn.record(Metrics.sinceUs(self.io, busy_since));
 
     self.drainMailbox();
@@ -413,7 +414,7 @@ fn turn(self: *Proxy) void {
         defer span.end();
         self.env.events.drain(self.io, self);
     }
-    const now_ms = nowMs(self.io);
+    const now_ms = clock.ms(self.io);
     if (now_ms >= self.next_sweep_ms) {
         self.next_sweep_ms = now_ms + sweep_interval_ms;
         var buffered: u64 = 0;
@@ -426,10 +427,6 @@ fn turn(self: *Proxy) void {
     }
     self.serviceReady() catch return self.stop();
     if (self.scheduler.hasReady()) self.scheduler.wake.set(self.io);
-}
-
-fn nowMs(io: std.Io) u64 {
-    return @intCast(@divFloor(std.Io.Clock.awake.now(io).nanoseconds, std.time.ns_per_ms));
 }
 
 fn serviceReady(self: *Proxy) error{Canceled}!void {
@@ -468,7 +465,7 @@ fn welcome(self: *Proxy, connection: *NetherNet.Connection) void {
         connection.destroy();
         _ = self.players.fetchSub(1, .monotonic);
         self.stats.bump(.sessions_rejected, 1);
-        const now_ms = nowMs(self.io);
+        const now_ms = clock.ms(self.io);
         if (now_ms -| self.rejections_logged_ms >= rejection_log_interval_ms or self.rejections_logged_ms == 0) {
             log.warn("Turning away a connection: {s} ({t}, {d} more since the last warning)", .{ rejection(err), err, self.rejections_unlogged });
             self.rejections_logged_ms = now_ms;

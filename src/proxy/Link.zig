@@ -19,6 +19,7 @@ const Scheduler = @import("Scheduler.zig");
 const Stats = @import("Stats.zig");
 const Metrics = @import("Metrics.zig");
 const trace = @import("../trace.zig");
+const clock = @import("../clock.zig");
 
 const Link = @This();
 const Log = @import("../log.zig");
@@ -123,8 +124,8 @@ pub fn create(env: *const Env, connection: *NetherNet.Connection, address: std.I
         .pending = .init(env.pending_packets, env.pending_bytes, env.budget),
         .observer = if (env.observer_pool) |pool| try Observer.init(pool, env.player_bytes_per_second) else null,
         .managed = managed,
-        .stage_since_ms = nowMs(env.io),
-        .created_ms = nowMs(env.io),
+        .stage_since_ms = clock.ms(env.io),
+        .created_ms = clock.ms(env.io),
     };
     if (managed) |m| m.admission_pending = if (env.events.plugins) |plugins| plugins.admission != null else false;
     return self;
@@ -165,7 +166,7 @@ pub fn ending(self: *Link, reason: []const u8, err: ?anyerror) void {
 
 fn logEnd(self: *const Link) void {
     const reason = self.end_reason orelse "disconnected";
-    const lasted = Log.elapsed(nowMs(self.env.io) -| self.created_ms);
+    const lasted = Log.elapsed(clock.ms(self.env.io) -| self.created_ms);
     if (!self.joined) {
         if (self.end_error) |err|
             log.debug("Connection from {f} closed before login after {f}: {s} ({t})", .{ self.address, lasted, reason, err })
@@ -218,7 +219,7 @@ pub fn connect(self: *Link) (error{NoBackendAvailable} || std.Io.ConcurrentError
     self.backend_id = id;
     self.env.events.backendSelected(self.player, id.index());
     self.dial = .{};
-    self.dial_started_ns = Metrics.nowNs(self.env.io);
+    self.dial_started_ns = clock.ns(self.env.io);
     const backend = self.env.router.get(id);
     routing_log.debug("{f} -> {f}, attempt {d}", .{ self.who(), backend.*, self.tried.count() });
     self.dial_task = try self.env.io.concurrent(Dial.run, .{ &self.dial, self.env.transport, backend.address, Scheduler.linkNotify(self) });
@@ -301,7 +302,7 @@ pub fn networkStats(self: *Link, target: abi.PacketTarget, out: *abi.NetworkStat
     if (self.session == null) return .stale_handle;
     const session = &self.session.?;
     if (!session.open()) return .too_late;
-    const now_ms = @import("../plugin/Packets.zig").now(self.env.io) / std.time.ns_per_ms;
+    const now_ms = clock.ms(self.env.io);
     switch (target) {
         .player => out.* = Network.snapshot(session, now_ms),
         .backend => {
@@ -325,7 +326,7 @@ pub fn gameplay(self: *Link, query: Handles.Query) abi.Status {
     const session = &self.session.?;
     if (!session.open()) return .too_late;
     const managed = self.managed orelse return .unsupported;
-    const now_ms = @import("../plugin/Packets.zig").now(self.env.io) / std.time.ns_per_ms;
+    const now_ms = clock.ms(self.env.io);
     return managed.gameplay.answer(query, now_ms, managed.client_state.effects);
 }
 
@@ -421,7 +422,7 @@ fn playerGone(self: *Link) void {
     self.session = null;
     self.cancelDial();
     // What the player sent last is still on its way to the backend
-    if (self.backend) |*backend| backend.closeSoon(nowMs(self.env.io));
+    if (self.backend) |*backend| backend.closeSoon(clock.ms(self.env.io));
     self.pending.clear(self.env.gpa);
     self.env.scheduler.schedule(self);
 }
@@ -465,7 +466,7 @@ fn pumpPlayer(self: *Link) void {
     if (self.session == null) return;
     const session = &self.session.?;
     if (session.closing_since_ms != null) {
-        if (session.drained(nowMs(self.env.io))) self.playerGone() else self.discard(session);
+        if (session.drained(clock.ms(self.env.io))) self.playerGone() else self.discard(session);
         return;
     }
     const span = trace.zone(@src(), "player io");
@@ -498,7 +499,7 @@ fn pumpBackend(self: *Link) void {
     if (self.backend == null) return;
     const backend = &self.backend.?;
     if (backend.closing_since_ms != null) {
-        if (backend.drained(nowMs(self.env.io))) self.dropBackend() else self.discard(backend);
+        if (backend.drained(clock.ms(self.env.io))) self.dropBackend() else self.discard(backend);
         return;
     }
     const span = trace.zone(@src(), "backend io");
@@ -564,7 +565,7 @@ fn discard(self: *Link, peer: *Peer) void {
 // The player's drained callback wakes the link again, and so does the sweep.
 fn pause(self: *Link) void {
     if (self.backlogged_since_ms != null) return;
-    self.backlogged_since_ms = nowMs(self.env.io);
+    self.backlogged_since_ms = clock.ms(self.env.io);
     self.env.stats.bump(.backlog_pauses, 1);
 }
 
@@ -648,16 +649,12 @@ fn currentStage(self: *const Link) Stage {
     return .playing;
 }
 
-fn nowMs(io: std.Io) u64 {
-    return @intCast(@divFloor(std.Io.Clock.awake.now(io).nanoseconds, std.time.ns_per_ms));
-}
-
 fn observe(self: *Link, observer: *Observer, direction: bedwire.TapDirection, payload: []const u8) Observer.Event {
     const event = observer.observe(.{
         .gpa = self.env.gpa,
         .io = self.env.io,
         .auth = self.env.auth,
-        .now_ms = nowMs(self.env.io),
+        .now_ms = clock.ms(self.env.io),
         .logins = self.env.logins,
         .transport_key = if (self.session) |*session| session.identityKey() else null,
     }, direction, payload);
@@ -705,7 +702,7 @@ fn adopt(self: *Link, result: Dial.Result) void {
     const connection = result catch |err| {
         self.env.stats.bump(.backend_failures, 1);
         if (err == error.Canceled) return self.closeSession();
-        const warn = if (self.env.router.health) |health| health.warnDial(self.backend_id, nowMs(self.env.io)) else true;
+        const warn = if (self.env.router.health) |health| health.warnDial(self.backend_id, clock.ms(self.env.io)) else true;
         if (warn)
             backend_log.warn("Can't reach {f}: {s} ({t}, {f})", .{ backend.*, NetherNet.describe(err), err, took })
         else
@@ -762,7 +759,7 @@ fn startTransfer(self: *Link, requested: Backend.Id) !void {
     self.transfer = try Transfer.create(self.transferHost(session), target, self.env.router.get(target).address, epoch.*, self.env.transfer);
     managed.moving = true;
     self.env.transfers.* += 1;
-    self.transfer_started_ns = Metrics.nowNs(self.env.io);
+    self.transfer_started_ns = clock.ns(self.env.io);
     self.env.scheduler.schedule(self);
 }
 
@@ -896,7 +893,7 @@ fn fail(self: *Link, err: anyerror) void {
 }
 
 fn closeSession(self: *Link) void {
-    if (self.session) |*session| session.closeSoon(nowMs(self.env.io));
+    if (self.session) |*session| session.closeSoon(clock.ms(self.env.io));
     self.publishState();
     self.env.scheduler.schedule(self);
 }

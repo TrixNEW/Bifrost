@@ -10,6 +10,7 @@ const Upstream = Managed.Upstream;
 const self_id = @import("../session/self_id.zig");
 const Budget = @import("../proxy/Budget.zig");
 const trace = @import("../trace.zig");
+const clock = @import("../clock.zig");
 const Stats = @import("../proxy/Stats.zig");
 const Events = @import("../plugin/Events.zig");
 const abi = @import("../plugin/abi.zig");
@@ -92,7 +93,7 @@ pub fn create(host: Host, target: Backend.Id, address: std.Io.net.IpAddress, epo
     const self = try host.gpa.create(Transfer);
     errdefer host.gpa.destroy(self);
     self.* = .{
-        .state = .init(epoch, settings.limits, now(host.io)),
+        .state = .init(epoch, settings.limits, clock.ns(host.io)),
         .target = target,
         .upstream = try .init(host.managed.shared),
         .queue = .{
@@ -130,7 +131,7 @@ pub fn destroy(self: *Transfer, gpa: std.mem.Allocator, io: std.Io) void {
 
 pub fn end(self: *Transfer, io: std.Io, stats: *Stats, event: State.Event) void {
     if (self.result != .running) return;
-    self.record(stats, self.state.apply(event, now(io)));
+    self.record(stats, self.state.apply(event, clock.ns(io)));
     self.result = .abandoned;
 }
 
@@ -152,7 +153,7 @@ pub fn service(self: *Transfer, host: Host) error{Canceled}!Result {
     };
     if (self.result != .running) return self.result;
     if (self.timer_fired.swap(false, .acquire)) {
-        if (self.state.expired(now(host.io))) self.on(host, .expired) else self.armTimer(host) catch self.on(host, .target_failed);
+        if (self.state.expired(clock.ns(host.io))) self.on(host, .expired) else self.armTimer(host) catch self.on(host, .target_failed);
     }
     if (self.result != .running) return self.result;
     if (self.state.phase == .syncing_client) {
@@ -313,7 +314,7 @@ fn endsRegistries(kind: ?protocol.PacketKind) bool {
 
 fn on(self: *Transfer, host: Host, event: State.Event) void {
     const phase = self.state.phase;
-    const step = self.state.apply(event, now(host.io));
+    const step = self.state.apply(event, clock.ns(host.io));
     if (step.action != .commit) self.publish(host);
     self.record(host.stats, step);
     switch (step.action) {
@@ -380,7 +381,7 @@ fn commit(self: *Transfer, host: Host) !void {
     // The client keeps its old game mode unless told, and the target never sends it again
     if (Managed.Gameplay.gameMode(self.target_modes.player, self.target_modes.world)) |mode| try outbox.emit(.{ .set_player_game_type = .{ .player_game_type = @fromBackingInt(mode) } });
     const spawn = self.target_spawn.?;
-    managed.gameplay.transferred(now(host.io) / std.time.ns_per_ms, spawn.dimension, spawn.position, self.target_modes.player, self.target_modes.world);
+    managed.gameplay.transferred(clock.ns(host.io) / std.time.ns_per_ms, spawn.dimension, spawn.position, self.target_modes.player, self.target_modes.world);
     self.handoff = try .begin(managed.client_dimension, spawn, &outbox);
     managed.startSync(self.handoff.?.acks(), spawn.dimension);
     managed.target_spawned = self.seen.spawned;
@@ -450,7 +451,7 @@ fn armTimer(self: *Transfer, host: Host) !void {
 }
 
 fn wake(io: std.Io, deadline_ns: u64, fired: *std.atomic.Value(bool), notify: Notify) void {
-    io.sleep(.fromNanoseconds(deadline_ns -| now(io)), .awake) catch return;
+    io.sleep(.fromNanoseconds(deadline_ns -| clock.ns(io)), .awake) catch return;
     fired.store(true, .release);
     notify.send();
 }
@@ -461,8 +462,4 @@ fn cancelTasks(self: *Transfer, io: std.Io) void {
     var task = self.dial_task orelse return;
     self.dial_task = null;
     self.dial.cancel(&task, io);
-}
-
-fn now(io: std.Io) u64 {
-    return @intCast(std.Io.Clock.awake.now(io).nanoseconds);
 }

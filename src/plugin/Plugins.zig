@@ -11,6 +11,7 @@ const Work = @import("Work.zig");
 const injection = @import("injection.zig");
 const sdk = @import("sdk.zig");
 const Notify = @import("../net/Notify.zig");
+const clock = @import("../clock.zig");
 
 const Plugins = @This();
 const log = @import("../log.zig").scoped(.plugin);
@@ -393,7 +394,7 @@ pub fn runCommand(self: *const Plugins, worker: u32, io: std.Io, player: abi.Pla
         .args = .of(std.mem.trim(u8, text[end..], " ")),
         .is_operator = @intFromBool(operator),
     };
-    const started = Packets.now(io);
+    const started = clock.ns(io);
     const outer = Work.enter();
     const previous_worker = Work.worker;
     const previous_context = Work.context;
@@ -526,10 +527,10 @@ fn complete(self: *Plugins, then: *const Work.Done, status: abi.Status, owner: ?
         Work.context = previous_context;
     }
     const result: abi.TaskResult = .{ .status = status, .worker = if (owner) |at| at.worker else abi.no_worker, .player = then.player };
-    const started = if (owner) |at| Packets.now(at.io) else 0;
+    const started = if (owner) |at| clock.ns(at.io) else 0;
     then.done(then.user, &result);
     if (owner) |at| {
-        const elapsed = Packets.now(at.io) -| started;
+        const elapsed = clock.ns(at.io) -| started;
         then.metrics[at.worker].timed(elapsed);
         if (elapsed >= self.options.slow_callback_ns) Packets.warnSlow(&then.metrics[at.worker], then.name, elapsed, at.io, "finishing a task", .{});
     }
@@ -543,7 +544,7 @@ fn finish(self: *Plugins, task: *Work.Task, status: abi.Status, owner: ?Owner) v
 }
 
 fn timed(self: *const Plugins, loaded: *Loaded, worker: u32, io: std.Io, started: u64, comptime what: []const u8, args: anytype) void {
-    const elapsed = Packets.now(io) -| started;
+    const elapsed = clock.ns(io) -| started;
     const metrics = &loaded.metrics[worker];
     metrics.timed(elapsed);
     if (elapsed >= self.options.slow_callback_ns) Packets.warnSlow(metrics, loaded.label(), elapsed, io, what, args);
@@ -702,7 +703,7 @@ fn from(context: *anyopaque) *Loaded {
 
 fn hostLog(context: *anyopaque, level: abi.LogLevel, message: abi.Str) callconv(.c) void {
     const loaded = from(context);
-    const now_ns: u64 = @intCast(std.Io.Clock.awake.now(std.Options.debug_io).nanoseconds);
+    const now_ns = clock.ns(std.Options.debug_io);
     const dropped = loaded.admitLog(@truncate(now_ns / std.time.ns_per_s)) orelse return;
     const text = message.slice();
     const name = if (loaded.ready.load(.acquire)) loaded.label() else "A loading plugin";
@@ -1654,9 +1655,9 @@ fn concurrentPosts(comptime spawn: anytype) !void {
         running += 1;
     }
     const total = threads.len * per_thread;
-    const deadline = Packets.now(testing.io) + 5 * std.time.ns_per_s;
+    const deadline = clock.ns(testing.io) + 5 * std.time.ns_per_s;
     while (deliveries[0].ok.load(.monotonic) + deliveries[1].ok.load(.monotonic) < total) {
-        if (Packets.now(testing.io) >= deadline) return error.WaitTimedOut;
+        if (clock.ns(testing.io) >= deadline) return error.WaitTimedOut;
         plugins.drain(0, testing.io, null);
         plugins.drain(1, testing.io, null);
         std.Thread.yield() catch {};
@@ -1889,9 +1890,9 @@ fn concurrentInjections(comptime spawn: anytype) !void {
         thread.* = try spawn(.{}, injectMany, .{ host, players, &deliveries, &errors });
         running += 1;
     }
-    const deadline = Packets.now(testing.io) + 5 * std.time.ns_per_s;
+    const deadline = clock.ns(testing.io) + 5 * std.time.ns_per_s;
     while (deliveries[0].ok.load(.monotonic) + deliveries[1].ok.load(.monotonic) + errors.load(.monotonic) < 1000) {
-        if (Packets.now(testing.io) >= deadline) return error.WaitTimedOut;
+        if (clock.ns(testing.io) >= deadline) return error.WaitTimedOut;
         plugins.drain(0, testing.io, &sinks[0]);
         plugins.drain(1, testing.io, &sinks[1]);
         std.Thread.yield() catch {};

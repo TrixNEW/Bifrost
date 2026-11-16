@@ -3,6 +3,7 @@ const protocol = @import("bedrock_protocol");
 const abi = @import("abi.zig");
 const Work = @import("Work.zig");
 const trace = @import("../trace.zig");
+const clock = @import("../clock.zig");
 pub const Decoded = @import("Decoded.zig");
 
 const log = @import("../log.zig").scoped(.plugin);
@@ -163,7 +164,7 @@ fn dispatch(comptime fields: bool, table: *const Table, call: Call, id: u10, byt
         }
     };
     // One clock read ends a callback and starts the next, unless validation ran in between
-    var clock: ?u64 = null;
+    var stamp: ?u64 = null;
     for (table.subscribers[range.start..][0..range.len]) |*subscriber| {
         switch (subscriber.phase) {
             .in_game => if (!call.in_game) continue,
@@ -173,7 +174,7 @@ fn dispatch(comptime fields: bool, table: *const Table, call: Call, id: u10, byt
         if (subscriber.validated) {
             if (valid == null) {
                 valid = if (decoded_type) |kind| cache.load(Thunk.decode, &checker, current, kind) == .ok else checker.valid(current);
-                clock = null;
+                stamp = null;
             }
             if (!valid.?) continue;
         }
@@ -189,23 +190,23 @@ fn dispatch(comptime fields: bool, table: *const Table, call: Call, id: u10, byt
         };
         var access: Access = undefined;
         if (fields and subscriber.fields) access = .{ .packet = &packet, .context = subscriber.context, .bytes = current, .out = out, .packet_type = decoded_type, .cache = &cache, .decoder = Thunk.decode, .permits = Thunk.permits, .decoder_context = &checker };
-        const started = clock orelse now(call.io);
+        const started = stamp orelse clock.ns(call.io);
         Work.context = subscriber.owner;
         const action = if (fields and subscriber.fields) access.call(subscriber) else subscriber.callback(subscriber.user, &packet);
-        const ended = now(call.io);
-        clock = ended;
+        const ended = clock.ns(call.io);
+        stamp = ended;
         const elapsed = ended -| started;
         const metrics = &subscriber.metrics[call.worker];
         metrics.timed(elapsed);
         if (elapsed >= call.slow_ns) {
             warnSlow(metrics, subscriber.name, elapsed, call.io, "on packet {d}", .{id});
-            clock = null;
+            stamp = null;
         }
         switch (action) {
             .pass => {},
             .cancel => return .cancel,
             .replace => {
-                clock = null;
+                stamp = null;
                 const len = packet.replacement_len;
                 const header = if (len != 0 and len <= out.len) packetHeader(out[0..len]) else null;
                 if (header == null or header.? & (id_count - 1) != id or header != packetHeader(bytes)) {
@@ -319,14 +320,10 @@ fn packetHeader(bytes: []const u8) ?u14 {
 }
 
 pub fn warnSlow(metrics: *Metrics, name: []const u8, elapsed_ns: u64, io: std.Io, comptime what: []const u8, args: anytype) void {
-    const at = now(io);
+    const at = clock.ns(io);
     if (metrics.last_warning_ns != 0 and at -| metrics.last_warning_ns < slow_warning_interval_ns) return;
     metrics.last_warning_ns = at;
     log.warn("{s} took {d}us " ++ what, .{ name, elapsed_ns / std.time.ns_per_us } ++ args);
-}
-
-pub fn now(io: std.Io) u64 {
-    return @intCast(std.Io.Clock.awake.now(io).nanoseconds);
 }
 
 const testing = std.testing;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const clock = @import("../clock.zig");
 const abi = @import("abi.zig");
 
 const Handles = @This();
@@ -57,7 +58,7 @@ pub fn acquire(self: *Handles, gpa: std.mem.Allocator, to: Route) !abi.Player {
     slot.route = to;
     slot.name_len = 0;
     slot.info = .{ .worker = to.worker };
-    slot.connected_ns = if (to.io) |io| @import("Packets.zig").now(io) else 0;
+    slot.connected_ns = if (to.io) |io| clock.ns(io) else 0;
     return handle(index, slot.generation);
 }
 
@@ -128,7 +129,7 @@ pub fn copyInfo(self: *Handles, player: abi.Player, out: *abi.PlayerInfo) bool {
         out.* = slot.info;
         break :copied .{ slot.route.?.io, slot.connected_ns };
     };
-    if (io) |clock| out.connection_duration_ms = (@import("Packets.zig").now(clock) -| started) / std.time.ns_per_ms;
+    if (io) |at| out.connection_duration_ms = (clock.ns(at) -| started) / std.time.ns_per_ms;
     return true;
 }
 

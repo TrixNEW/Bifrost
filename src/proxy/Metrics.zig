@@ -1,4 +1,5 @@
 const std = @import("std");
+const clock = @import("../clock.zig");
 
 pub const Histogram = struct {
     // Bucket i holds samples up to 2^i microseconds, the last one everything slower
@@ -34,12 +35,8 @@ pub const Timings = struct {
     }
 };
 
-pub fn nowNs(io: std.Io) u64 {
-    return @intCast(std.Io.Clock.awake.now(io).nanoseconds);
-}
-
 pub fn sinceUs(io: std.Io, started_ns: u64) u64 {
-    return (nowNs(io) -| started_ns) / std.time.ns_per_us;
+    return (clock.ns(io) -| started_ns) / std.time.ns_per_us;
 }
 
 pub fn header(w: *std.Io.Writer, name: []const u8, kind: []const u8, help: []const u8) !void {

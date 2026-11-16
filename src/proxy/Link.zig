@@ -526,12 +526,12 @@ fn pumpBackend(self: *Link) void {
         return self.fail(err);
     }
     if (self.transfer) |transfer| if (self.session) |*session| transfer.syncClient(self.transferHost(session)) catch |err| return self.fail(err);
-    const waiting = paused and self.stalled();
-    // Only a player who is behind starts the slow-player clock. A full transfer hold empties on the client's ack.
-    if (waiting and self.playerBacklogged()) return self.pause();
-    if (waiting) self.env.stats.bump(.hold_pauses, 1);
+    // Only a player who is behind starts the slow-player clock
+    if (paused and self.playerBacklogged()) return self.pause();
     self.backlogged_since_ms = null;
-    if (!drained and !waiting) self.env.scheduler.schedule(self);
+    // A full transfer hold empties on the client's ack, which runs this again
+    if (paused and self.holdFull()) return self.env.stats.bump(.hold_pauses, 1);
+    if (!drained) self.env.scheduler.schedule(self);
 }
 
 // A backend's Transfer to another backend waits for any transfer underway and for the player to be in game. A kick
@@ -568,7 +568,10 @@ fn pause(self: *Link) void {
 }
 
 fn stalled(self: *Link) bool {
-    if (self.playerBacklogged()) return true;
+    return self.playerBacklogged() or self.holdFull();
+}
+
+fn holdFull(self: *const Link) bool {
     const managed = self.managed orelse return false;
     const hold = managed.hold orelse return false;
     return hold.nearlyFull();

@@ -1737,7 +1737,7 @@ fn workersScenario(env: *Env) !void {
         \\## Workers
         \\
         \\{d} players, {d} B echoes, {d} in flight each, 4 backends. CPU is proxy CPU time over wall time while measuring (100% = one core).
-        \\One listener hands players to workers round robin.
+        \\One listener hands each player to the worker holding the fewest.
         \\
         \\| workers | round trips/s | MiB/s | p50 us | p99 us | proxy CPU | RSS | players per worker |
         \\|---|---|---|---|---|---|---|---|

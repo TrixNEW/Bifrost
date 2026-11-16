@@ -62,11 +62,7 @@ pub fn disconnected(self: Events, player: *abi.Player) void {
 pub fn backendSelected(self: Events, player: abi.Player, backend: usize) void {
     const plugins = self.live(player) orelse return;
     plugins.handles.invalidatePackets(player);
-    var info: abi.PlayerInfo = undefined;
-    if (plugins.handles.copyInfo(player, &info)) {
-        info.state.backend = @intCast(backend);
-        _ = plugins.handles.setState(player, info.state);
-    }
+    plugins.handles.setField(player, .backend, @intCast(backend));
     plugins.emit(&.{ .kind = .backend_selected, .player = player, .backend = @intCast(backend), .worker = self.worker }, null);
 }
 
@@ -74,11 +70,7 @@ pub fn transferRequested(self: Events, player: abi.Player, from: usize, to: usiz
     var decision: abi.TransferDecision = .{};
     const plugins = self.live(player) orelse return decision;
     plugins.handles.invalidatePackets(player);
-    var info: abi.PlayerInfo = undefined;
-    if (plugins.handles.copyInfo(player, &info)) {
-        info.state.transfer = .requested;
-        _ = plugins.handles.setState(player, info.state);
-    }
+    plugins.handles.setField(player, .transfer, .requested);
     plugins.emit(&.{ .kind = .transfer_requested, .player = player, .from_backend = @intCast(from), .backend = @intCast(to), .worker = self.worker }, &decision);
     return decision;
 }

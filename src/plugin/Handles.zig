@@ -46,6 +46,7 @@ pub fn deinit(self: *Handles, gpa: std.mem.Allocator) void {
 }
 
 pub fn acquire(self: *Handles, gpa: std.mem.Allocator, to: Route) !abi.Player {
+    const connected_ns = if (to.io) |io| clock.ns(io) else 0;
     self.enter();
     defer self.leave();
     try self.free.ensureTotalCapacity(gpa, self.slots.items.len + 1);
@@ -58,7 +59,7 @@ pub fn acquire(self: *Handles, gpa: std.mem.Allocator, to: Route) !abi.Player {
     slot.route = to;
     slot.name_len = 0;
     slot.info = .{ .worker = to.worker };
-    slot.connected_ns = if (to.io) |io| clock.ns(io) else 0;
+    slot.connected_ns = connected_ns;
     return handle(index, slot.generation);
 }
 
@@ -119,6 +120,13 @@ pub fn setState(self: *Handles, player: abi.Player, state: abi.PlayerState) ?abi
     const previous = slot.info.state.phase;
     slot.info.state = state;
     return previous;
+}
+
+pub fn setField(self: *Handles, player: abi.Player, comptime field: std.meta.FieldEnum(abi.PlayerState), value: @FieldType(abi.PlayerState, @tagName(field))) void {
+    self.enter();
+    defer self.leave();
+    _, const slot = self.find(player) orelse return;
+    @field(slot.info.state, @tagName(field)) = value;
 }
 
 pub fn copyInfo(self: *Handles, player: abi.Player, out: *abi.PlayerInfo) bool {

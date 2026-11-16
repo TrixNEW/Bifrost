@@ -1018,6 +1018,26 @@ test "managed batches free storage when arena retention allocation fails" {
     try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
 }
 
+test "a backend whose kick is held back is neither read nor sent to" {
+    const gpa = std.testing.allocator;
+    var storage: [1][]const u8 = .{"dropped"};
+    var shared: Shared = .{ .pool = undefined, .key = undefined, .keys = undefined, .batch = &storage, .translated = .init(gpa) };
+    defer shared.translated.deinit();
+    // Touching either session would fault, so getting through shows neither was used
+    var managed: Managed = .{ .gpa = gpa, .shared = &shared, .player = undefined, .upstream = undefined, .early = .init(0, 0, null) };
+    var kick = [_]u8{5};
+    managed.held_kick = &kick;
+    var stats: Stats = .{};
+    var peer: Peer = undefined;
+    const ends: Ends = .{ .io = std.testing.io, .stats = &stats, .player = &peer, .backend = &peer };
+    try managed.fromBackend(ends, "not a frame");
+    try std.testing.expectEqual(@as(u64, 0), stats.managed_decoded_batches);
+    var batch: Batch = .{ .managed = &managed, .ends = ends, .to_player = false, .count = 1 };
+    try batch.flush();
+    try std.testing.expectEqual(@as(usize, 0), batch.count);
+    try std.testing.expectEqual(@as(u64, 0), stats.bytes_to_backend);
+}
+
 test "player milestones and container tracking use the delivered packet" {
     var managed: Managed = .{ .gpa = std.testing.allocator, .shared = undefined, .player = undefined, .upstream = undefined, .early = .init(0, 0, null) };
     managed.player.state = .resource_packs;

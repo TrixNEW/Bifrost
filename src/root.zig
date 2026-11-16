@@ -45,6 +45,7 @@ extern "c" fn mallopt(param: c_int, value: c_int) c_int;
 test {
     _ = log;
     _ = Proxy;
+    _ = Workers;
     _ = Config;
     _ = loader;
     _ = Admission;

@@ -142,16 +142,26 @@ pub fn localAddress(self: *const Workers) std.Io.net.IpAddress {
     return self.listener.?.localAddress();
 }
 
-// Round robin; a full worker passes the player on to the next one
+// The worker with the fewest players takes the next one; a full inbox passes them on
 fn dispatch(context: *anyopaque, connection: *NetherNet.Connection) void {
     const self: *Workers = @ptrCast(@alignCast(context));
-    const first = self.next_proxy.fetchAdd(1, .monotonic);
+    const first = lightest(self.proxies, self.next_proxy.fetchAdd(1, .monotonic));
     for (0..self.proxies.len) |offset| {
         self.proxies[(first + offset) % self.proxies.len].adopt(connection) catch continue;
         return;
     }
     connection.destroy();
     _ = self.dropped.fetchAdd(1, .monotonic);
+}
+
+// Ties go round robin, so equally loaded workers still take turns
+fn lightest(proxies: []const *Proxy, turn: usize) usize {
+    var best = turn % proxies.len;
+    for (1..proxies.len) |offset| {
+        const index = (turn + offset) % proxies.len;
+        if (proxies[index].players.load(.monotonic) < proxies[best].players.load(.monotonic)) best = index;
+    }
+    return best;
 }
 
 // The server list asks for this on every refresh, from the HTTP tasks
@@ -468,4 +478,24 @@ fn logStatus(self: *Workers) void {
 fn runWorker(self: *Workers, proxy: *Proxy) void {
     proxy.run();
     self.stop();
+}
+
+test "new players go to the lightest worker, in turn when workers are level" {
+    var config: Config = .{ .bind = .{ .ip4 = .loopback(0) }, .max_players = 8 };
+    try config.addBackend(null, .{ .ip4 = .loopback(9) });
+    var transport: NetherNet = undefined;
+    var proxies: [3]*Proxy = undefined;
+    var created: usize = 0;
+    defer for (proxies[0..created]) |proxy| proxy.destroy();
+    for (&proxies) |*proxy| {
+        proxy.* = try Proxy.create(std.testing.allocator, std.testing.io, config, .{ .transport = &transport });
+        created += 1;
+    }
+    for (0..6) |turn| try std.testing.expectEqual(turn % 3, lightest(&proxies, turn));
+    for (proxies, [_]u32{ 5, 2, 2 }) |proxy, players| proxy.players.store(players, .monotonic);
+    try std.testing.expectEqual(@as(usize, 1), lightest(&proxies, 0));
+    try std.testing.expectEqual(@as(usize, 1), lightest(&proxies, 1));
+    try std.testing.expectEqual(@as(usize, 2), lightest(&proxies, 2));
+    proxies[2].players.store(1, .monotonic);
+    for (0..3) |turn| try std.testing.expectEqual(@as(usize, 2), lightest(&proxies, turn));
 }

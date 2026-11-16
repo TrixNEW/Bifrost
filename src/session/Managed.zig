@@ -143,8 +143,6 @@ redirect_warned: bool = false,
 moving: bool = false,
 // The old backend's kick, held back while the player moves or is about to
 held_kick: ?[]u8 = null,
-// The old backend left before the commit, so until then the player's packets are dropped
-orphaned: bool = false,
 // Player packets sent before the backend is ready
 early: PacketQueue,
 inbound: Rate = .unlimited,
@@ -290,9 +288,9 @@ const Batch = struct {
     added: usize = 0,
 
     // Returns what was queued, or null if a plugin cancelled the packet
-        const kind = Current.packetKind(id);
     fn add(self: *Batch, id: u10, bytes: []const u8) !?[]const u8 {
         const shared = self.managed.shared;
+        const kind = Current.packetKind(id);
         var packet = bytes;
         if (self.count == shared.batch.len) try self.flush();
         // Plugins and ClientState see the client's ids in both directions
@@ -602,9 +600,9 @@ fn charge(self: *Managed, ends: Ends, bytes: usize) !void {
     return error.Flooding;
 }
 
+pub fn fromBackend(self: *Managed, ends: Ends, payload: []const u8) !void {
     // Bedwire refuses anything after a Disconnect, and the backend that sent it is on its way out
     if (self.held_kick != null) return;
-pub fn fromBackend(self: *Managed, ends: Ends, payload: []const u8) !void {
     if (self.relayable(.from_backend)) {
         if (try relay(&self.upstream.session, &self.player, ends.player, ends.stats, .bytes_to_player, payload)) return relayed(ends.stats, payload);
     }
@@ -786,8 +784,8 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
                     self.client_dimension = start.settings.spawn_settings.dimension;
                 }
             }
-        // Held packets go through `deliver` later, which adds the plugin commands then
         }
+        // Held packets go through `deliver` later, which adds the plugin commands then
         if (self.hold) |hold| {
             try hold.push(self.gpa, packet.bytes);
             continue;

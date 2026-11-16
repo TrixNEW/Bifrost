@@ -368,7 +368,6 @@ fn commit(self: *Transfer, host: Host) !void {
     host.backend.* = self.client;
     self.client = null;
     managed.moving = false;
-    managed.orphaned = false;
     // What the old backend asked for no longer applies
     managed.redirect = null;
     managed.dropKick();

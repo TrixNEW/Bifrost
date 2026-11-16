@@ -239,7 +239,8 @@ pub fn forwardToBackend(self: *Link, message: NetherNet.Message) !void {
         return;
     }
     if (self.managed) |managed| {
-        if (self.backend == null and self.dial_task == null and !managed.orphaned) return error.BackendClosed;
+        // Mid-transfer the old backend can be gone already, and the player waits on the target
+        if (self.backend == null and self.dial_task == null and !managed.moving) return error.BackendClosed;
         managed.fromPlayer(self.ends(), payload) catch |err| {
             // A send can find the old backend gone before reading it does
             if (self.backend) |*backend| if (!backend.connected() and self.orphan(err)) return;
@@ -439,7 +440,7 @@ pub fn service(self: *Link) error{Canceled}!void {
         .rolled_back => {
             self.endTransfer(null);
             // The old backend left while the transfer was trying, so there's nothing to roll back to
-            if (self.backend == null and self.managed.?.orphaned) {
+            if (self.backend == null) {
                 self.ending("the old backend left and the transfer failed", null);
                 if (self.managed.?.held_kick == null) {
                     _ = self.disconnect("Lost connection to the server");
@@ -881,11 +882,9 @@ fn flushPending(self: *Link) !void {
 // The old backend closing mid-transfer leaves the player waiting on the target instead of ending the session
 fn orphan(self: *Link, err: anyerror) bool {
     const transfer = self.transfer orelse return false;
-    const managed = self.managed orelse return false;
     if (transfer.state.phase.committed()) return false;
     transfer_log.info("{s} closed while {f} was moving to {s}; the transfer carries on ({t})", .{ self.env.router.get(self.backend_id).name(), self.who(), self.env.router.get(transfer.target).name(), err });
     self.dropBackend();
-    managed.orphaned = true;
     return true;
 }
 

@@ -529,6 +529,7 @@ fn pumpBackend(self: *Link) void {
     const waiting = paused and self.stalled();
     // Only a player who is behind starts the slow-player clock. A full transfer hold empties on the client's ack.
     if (waiting and self.playerBacklogged()) return self.pause();
+    if (waiting) self.env.stats.bump(.hold_pauses, 1);
     self.backlogged_since_ms = null;
     if (!drained and !waiting) self.env.scheduler.schedule(self);
 }

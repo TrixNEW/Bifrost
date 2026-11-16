@@ -44,6 +44,7 @@ join_timeouts: u64 = 0,
 logins_throttled: u64 = 0,
 player_floods: u64 = 0,
 backlog_pauses: u64 = 0,
+hold_pauses: u64 = 0,
 slow_players: u64 = 0,
 unreliable_dropped: u64 = 0,
 // Gauges the worker refreshes once a second

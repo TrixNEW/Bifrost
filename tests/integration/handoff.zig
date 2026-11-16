@@ -322,6 +322,7 @@ test "a target that floods during the switch is paused, not failed" {
     try rig.transfer(1);
     try waitForChanges(&rig, 1);
     try pumpFor(rig.player, 2_500);
+    try std.testing.expect(rig.stats().hold_pauses >= 1);
     try std.testing.expectEqual(@as(u64, 0), rig.stats().slow_players);
     try std.testing.expectEqual(@as(u64, 0), rig.stats().transfers_failed_after_commit);
 

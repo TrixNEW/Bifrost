@@ -29,6 +29,10 @@ first `[[backend]]` takes them and the others are fallbacks in order. A backend'
 the player inside the proxy in managed mode, and is dropped when it points anywhere else unless `[transfer]
 external = true`. See [Running Bifrost](operations.md#routing).
 
+During a transfer the target sees the player's Login before the old backend sees them leave, so backends that
+share inventories or other player data need to hand it over themselves. See
+[Known issues](known-issues.md#limits-of-the-design).
+
 ## Quark v6
 
 Quark v6 serves NetherNet from `src/network/mcpe/nethernet` using the PHP `webrtc` extension, with HTTP signaling

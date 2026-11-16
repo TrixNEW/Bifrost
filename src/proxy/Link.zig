@@ -2,7 +2,6 @@ const std = @import("std");
 const bedwire = @import("bedwire");
 const Backend = @import("../backend/Backend.zig");
 const Dial = @import("../backend/Dial.zig");
-const Health = @import("../backend/Health.zig");
 const Router = @import("../backend/Router.zig");
 const NetherNet = @import("../net/NetherNet.zig");
 const Peer = @import("../net/Peer.zig");
@@ -35,10 +34,10 @@ const max_dial_attempts = 3;
 pub const backlog_bytes = NetherNet.backlog_bytes;
 
 pub const Deadlines = struct {
-    login_ms: u32 = 30_000,
-    resource_packs_ms: u32 = 600_000,
-    join_ms: u32 = 120_000,
-    slow_player_ms: u32 = 5_000,
+    login_ms: u32,
+    resource_packs_ms: u32,
+    join_ms: u32,
+    slow_player_ms: u32,
 };
 
 pub const Stage = enum { login, resource_packs, joining, playing };
@@ -51,21 +50,21 @@ pub const Env = struct {
     transport: *const NetherNet,
     observer_pool: ?*bedwire.BufferPool,
     auth: Observer.Auth,
-    health: ?*Health,
     router: *Router,
     pending_packets: u32,
     pending_bytes: u32,
-    budget: ?*Budget = null,
-    logins: ?*Rate = null,
-    player_bytes_per_second: u32 = 0,
-    deadlines: Deadlines = .{},
-    managed: ?*Managed.Shared = null,
-    transfer: Transfer.Settings = .{ .limits = .{ .dial_ms = 5_000, .phase_ms = 5_000, .total_ms = 15_000 }, .queue_packets = 64, .queue_bytes = 1024 * 1024 },
-    transfers: ?*u32 = null,
-    max_transfers: u32 = std.math.maxInt(u32),
-    next_epoch: ?*Transfer.State.Epoch = null,
-    events: Events = .{},
-    timings: ?*Metrics.Timings = null,
+    budget: *Budget,
+    logins: *Rate,
+    player_bytes_per_second: u32,
+    deadlines: Deadlines,
+    managed: ?*Managed.Shared,
+    transfer: Transfer.Settings,
+    // Transfers this worker has underway
+    transfers: *u32,
+    max_transfers: u32,
+    next_epoch: *Transfer.State.Epoch,
+    events: Events,
+    timings: *Metrics.Timings,
 };
 
 env: *const Env,
@@ -713,7 +712,7 @@ fn adopt(self: *Link, result: Dial.Result) void {
     const connection = result catch |err| {
         self.env.stats.bump(.backend_failures, 1);
         if (err == error.Canceled) return self.closeSession();
-        const warn = if (self.env.health) |health| health.warnDial(self.backend_id, nowMs(self.env.io)) else true;
+        const warn = if (self.env.router.health) |health| health.warnDial(self.backend_id, nowMs(self.env.io)) else true;
         if (warn)
             backend_log.warn("Can't reach {f}: {s} ({t}, {f})", .{ backend.*, NetherNet.describe(err), err, took })
         else
@@ -732,7 +731,7 @@ fn adopt(self: *Link, result: Dial.Result) void {
     self.backend.?.watch(Scheduler.linkNotify(self));
     self.network_rates = .{};
     self.env.stats.bump(.backends_connected, 1);
-    if (self.env.timings) |timings| timings.dial.record(Metrics.sinceUs(self.env.io, self.dial_started_ns));
+    self.env.timings.dial.record(Metrics.sinceUs(self.env.io, self.dial_started_ns));
     if (self.session == null) return self.dropBackend();
     if (self.managed) |managed| return managed.backendConnected(self.ends()) catch |err| self.fail(err);
     self.flushPending() catch |err| self.fail(err);
@@ -762,14 +761,14 @@ fn startTransfer(self: *Link, requested: Backend.Id) !void {
     };
     if (target.index() >= self.env.router.backends.len) return error.UnknownBackend;
     if (target == self.backend_id) return error.AlreadyThere;
-    if (self.env.transfers) |count| if (count.* >= self.env.max_transfers) return error.TooManyTransfers;
+    if (self.env.transfers.* >= self.env.max_transfers) return error.TooManyTransfers;
     try self.env.router.claimTarget(target);
     errdefer self.env.router.release(target);
-    const epoch = self.env.next_epoch.?;
+    const epoch = self.env.next_epoch;
     epoch.* +%= 1;
     self.transfer = try Transfer.create(self.transferHost(session), target, self.env.router.get(target).address, epoch.*, self.env.transfer);
     managed.moving = true;
-    if (self.env.transfers) |count| count.* += 1;
+    self.env.transfers.* += 1;
     self.transfer_started_ns = Metrics.nowNs(self.env.io);
     self.env.scheduler.schedule(self);
 }
@@ -794,9 +793,9 @@ fn endTransfer(self: *Link, event: ?Transfer.State.Event) void {
     const source = self.backend_id;
     self.transfer = null;
     if (self.managed) |managed| managed.moving = false;
-    if (self.env.transfers) |count| count.* -= 1;
+    self.env.transfers.* -= 1;
     if (event) |cause| transfer.end(self.env.io, self.env.stats, cause);
-    if (transfer.outcome == .committed) if (self.env.timings) |timings| timings.transfer.record(Metrics.sinceUs(self.env.io, self.transfer_started_ns));
+    if (transfer.outcome == .committed) self.env.timings.transfer.record(Metrics.sinceUs(self.env.io, self.transfer_started_ns));
     if (transfer.state.phase.committed()) {
         self.vacate();
         self.occupied = transfer.target;

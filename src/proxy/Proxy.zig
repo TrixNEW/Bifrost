@@ -147,7 +147,6 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         .transport = options.transport,
         .observer_pool = if (self.observer_pool) |*pool| pool else null,
         .auth = options.auth,
-        .health = options.health,
         .router = &self.router,
         .pending_packets = config.pending_packets,
         .pending_bytes = config.pending_bytes,
@@ -198,8 +197,8 @@ pub fn adopt(self: *Proxy, connection: *NetherNet.Connection) error{ Busy, Cance
         if (self.stop_requested.load(.acquire)) return error.Canceled;
         if (self.inbox_len == inbox_capacity) return error.Busy;
         self.inbox[self.inbox_len] = connection;
-        _ = self.players.fetchAdd(1, .monotonic);
         self.inbox_len += 1;
+        _ = self.players.fetchAdd(1, .monotonic);
     }
     self.scheduler.wake.set(self.io);
 }
@@ -464,14 +463,14 @@ fn serviceReady(self: *Proxy) error{Canceled}!void {
 fn retire(self: *Proxy, link: *Link) void {
     self.admission.leave(self.io, link.address);
     link.destroy();
-    _ = self.players.fetchSub(1, .monotonic);
     self.stats.bump(.links_closed, 1);
+    _ = self.players.fetchSub(1, .monotonic);
 }
 
 fn welcome(self: *Proxy, connection: *NetherNet.Connection) void {
     self.accept(connection, NetherNet.remoteAddress(connection) orelse unknown_address) catch |err| {
-        _ = self.players.fetchSub(1, .monotonic);
         connection.destroy();
+        _ = self.players.fetchSub(1, .monotonic);
         self.stats.bump(.sessions_rejected, 1);
         const now_ms = nowMs(self.io);
         if (now_ms -| self.rejections_logged_ms >= rejection_log_interval_ms or self.rejections_logged_ms == 0) {
@@ -514,8 +513,8 @@ fn closeAll(self: *Proxy) void {
     {
         self.mailbox_mutex.lockUncancelable(self.io);
         defer self.mailbox_mutex.unlock(self.io);
-        _ = self.players.fetchSub(@intCast(self.inbox_len), .monotonic);
         for (self.inbox[0..self.inbox_len]) |connection| connection.destroy();
+        _ = self.players.fetchSub(@intCast(self.inbox_len), .monotonic);
         self.inbox_len = 0;
         if (self.console_request) |request| request.reply.finish(self.io, 0);
         self.console_request = null;

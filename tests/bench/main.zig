@@ -233,6 +233,8 @@ fn serveProxy(init: std.process.Init, args: []const [:0]const u8) !void {
     config.health_timeout_ms = @min(1_000, config.health_interval_ms / 2);
     for (args[4..]) |port| try config.addBackend(null, harness.loopback(try std.fmt.parseInt(u16, port, 10)));
     config.joinAll();
+    // Inherited from the driver's environment, to compare libdatachannel pool sizes with one binary
+    if (init.environ_map.get("BIFROST_NETHERNET_THREADS")) |threads| try bifrost.setNativeThreads(try std.fmt.parseInt(u8, threads, 10));
     // Same runtime setup as the real binary
     const rt = try zio.Runtime.init(init.gpa, .{ .executors = .exact(config.workers) });
     defer rt.deinit();

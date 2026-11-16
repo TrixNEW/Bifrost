@@ -133,7 +133,6 @@ pub const Reply = struct {
     }
 };
 
-/// Reads commands until stdin closes or the task is canceled. `run` gets each trimmed line.
 pub fn read(io: std.Io, context: anytype, comptime run: fn (@TypeOf(context), []const u8) error{Canceled}!void) void {
     // A proxy started in the background of a shell would otherwise be stopped the moment it read its terminal
     if (builtin.os.tag != .windows) {

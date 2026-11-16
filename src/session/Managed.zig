@@ -144,7 +144,6 @@ redirect_warned: bool = false,
 moving: bool = false,
 // The old backend's kick, held back while the player moves or is about to
 held_kick: ?[]u8 = null,
-// Player packets sent before the backend is ready
 early: PacketQueue,
 inbound: Rate = .unlimited,
 
@@ -827,7 +826,6 @@ fn redirects(self: *Managed, ends: Ends, packet: []const u8) bool {
     return true;
 }
 
-/// Sends the kick held back during a move that didn't happen.
 pub fn releaseKick(self: *Managed, ends: Ends) !void {
     const kick = self.held_kick orelse return;
     defer self.dropKick();

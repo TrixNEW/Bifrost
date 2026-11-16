@@ -36,7 +36,6 @@ pub fn status(self: *const Health, id: Backend.Id) Status {
     return self.entries[id.index()].status.load(.acquire);
 }
 
-/// Holds a place for one more player unless the backend is at its max_players.
 pub fn claim(self: *Health, id: Backend.Id) bool {
     const entry = &self.entries[id.index()];
     const limit = self.backends[id.index()].max_players;
@@ -62,7 +61,6 @@ pub fn isDraining(self: *const Health, id: Backend.Id) bool {
     return self.entries[id.index()].draining.load(.acquire);
 }
 
-/// Draining keeps the players already there but sends no new ones or transfers.
 pub fn setDraining(self: *Health, id: Backend.Id, draining: bool) bool {
     return self.entries[id.index()].draining.swap(draining, .acq_rel) != draining;
 }

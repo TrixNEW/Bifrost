@@ -133,7 +133,6 @@ pub fn configure(settings: Settings) !void {
     updateThreshold();
 }
 
-/// Changes the console's level while running; the file keeps its own.
 pub fn setConsoleLevel(level: Level) void {
     const io = std.Options.debug_io;
     const prev = io.swapCancelProtection(.blocked);
@@ -145,7 +144,6 @@ pub fn setConsoleLevel(level: Level) void {
     updateThreshold();
 }
 
-/// Closes the log file; later lines only reach the console.
 pub fn deinit() void {
     const io = std.Options.debug_io;
     const prev = io.swapCancelProtection(.blocked);

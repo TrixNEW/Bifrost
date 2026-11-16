@@ -10,7 +10,7 @@ const Peer = @This();
 pub const drain_timeout_ms = 2_000;
 
 connection: *NetherNet.Connection,
-// Never below what the native buffers hold; refreshed only near the mark
+// At least what libdatachannel has queued to send; only refreshed near the mark
 buffered_bound: usize = 0,
 closing_since_ms: ?u64 = null,
 shutting_down: bool = false,

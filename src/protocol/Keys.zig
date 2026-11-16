@@ -91,7 +91,6 @@ pub fn reload(self: *Keys) !bool {
     return changed;
 }
 
-/// Swaps in these keys unless they're the ones already loaded.
 pub fn replace(self: *Keys, json: []const u8) !bool {
     const digest = std.hash.Wyhash.hash(0, json);
     if (digest == self.digest) return false;
@@ -108,7 +107,6 @@ pub fn replace(self: *Keys, json: []const u8) !bool {
     return true;
 }
 
-/// Fetches Microsoft's current keys, swaps them in and saves them to the keys file for the next start.
 pub fn download(self: *Keys) !bool {
     const json = try fetch(self.gpa, self.io);
     defer self.gpa.free(json);

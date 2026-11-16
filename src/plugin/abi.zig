@@ -389,11 +389,11 @@ pub const Host = extern struct {
     worker_count: *const fn (context: *anyopaque) callconv(.c) u32,
     subscribe_packet: *const fn (context: *anyopaque, direction: Direction, id: u32, phase: PacketPhase, flags: PacketFlags, callback: ?PacketFn, user: ?*anyopaque) callconv(.c) Status,
     register_command: *const fn (context: *anyopaque, name: Str, callback: ?CommandFn, user: ?*anyopaque) callconv(.c) Status,
-    // `run` shares a few threads with every plugin. `done` runs once on the player's worker,
-    // with stale_handle if they left or canceled if `run` never started
+    // `run` shares a few threads with every plugin. `done` runs once: on the player's worker, or off any
+    // worker with stale_handle if they left, or canceled if `run` never started
     spawn_task: *const fn (context: *anyopaque, player: Player, run: ?TaskFn, done: ?TaskDoneFn, user: ?*anyopaque) callconv(.c) Status,
     send_message: *const fn (context: *anyopaque, player: Player, text: Str) callconv(.c) Status,
-    // Runs `done` on the player's worker, same rules as spawn_task
+    // Runs `done` once, same rules as spawn_task
     post: *const fn (context: *anyopaque, player: Player, done: ?TaskDoneFn, user: ?*anyopaque) callconv(.c) Status,
     register_command_info: *const fn (context: *anyopaque, info: ?*const CommandInfo) callconv(.c) Status,
     // Check has(.set_description) first

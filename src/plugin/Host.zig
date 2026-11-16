@@ -14,7 +14,7 @@ const max_description_len = Plugins.max_description_len;
 const reserveMessage = Plugins.reserveMessage;
 const reserveInjection = Plugins.reserveInjection;
 
-/// The table a plugin calls the proxy through. Every entry gets the plugin's own `Loaded` as its context.
+/// Every entry gets the plugin's own `Loaded` as its context.
 pub fn table(loaded: *Loaded) abi.Host {
     return .{
         .context = loaded,

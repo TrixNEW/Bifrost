@@ -20,7 +20,6 @@ pub fn finished(self: *const Dial) ?Result {
     return self.result;
 }
 
-/// Cancels a running dial and closes whatever it managed to open.
 pub fn cancel(self: *Dial, task: *std.Io.Future(void), io: std.Io) void {
     task.cancel(io);
     if (self.finished()) |result| {

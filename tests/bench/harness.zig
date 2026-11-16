@@ -225,7 +225,6 @@ fn statusKb(line: []const u8, key: []const u8) ?u64 {
     return std.fmt.parseInt(u64, words.next() orelse return null, 10) catch null;
 }
 
-/// The real proxy, running in a child copy of this binary
 pub const Proxy = struct {
     io: std.Io,
     child: std.process.Child,
@@ -493,7 +492,6 @@ pub const Player = struct {
         try self.connection.send(frame.bytes, .reliable);
     }
 
-    /// Sends and waits for exactly this reply
     pub fn exchange(self: *Player, payload: []const u8, reply: []const u8, timeout_ms: u64) !void {
         self.expect = reply;
         defer self.expect = null;

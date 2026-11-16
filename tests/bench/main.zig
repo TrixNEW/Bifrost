@@ -347,7 +347,6 @@ const Percentiles = struct {
     p99: f64 = 0,
     max: f64 = 0,
 
-    /// Sorts in place, reports microseconds
     fn of(samples_ns: []u64) Percentiles {
         if (samples_ns.len == 0) return .{};
         std.mem.sort(u64, samples_ns, {}, std.sort.asc(u64));

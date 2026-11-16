@@ -315,7 +315,6 @@ pub const RunningWorkers = struct {
     }
 };
 
-/// A passthrough player, sending raw messages.
 pub const Player = struct {
     io: std.Io,
     connection: *net.Connection,

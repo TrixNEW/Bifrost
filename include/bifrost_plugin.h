@@ -419,11 +419,11 @@ typedef struct bifrost_host {
     uint32_t (*worker_count)(void *context) BIFROST_NOEXCEPT;
     bifrost_status (*subscribe_packet)(void *context, bifrost_direction direction, uint32_t id, bifrost_packet_phase phase, uint32_t flags, bifrost_packet_fn callback, void *user) BIFROST_NOEXCEPT;
     bifrost_status (*register_command)(void *context, bifrost_str name, bifrost_command_fn callback, void *user) BIFROST_NOEXCEPT;
-    /* run shares a few threads with every plugin. done runs once on the player's worker,
-       with STALE_HANDLE if they left or CANCELED if run never started */
+    /* run shares a few threads with every plugin. done runs once: on the player's worker, or off any
+       worker with STALE_HANDLE if they left, or CANCELED if run never started */
     bifrost_status (*spawn_task)(void *context, bifrost_player player, bifrost_task_fn run, bifrost_task_done_fn done, void *user) BIFROST_NOEXCEPT;
     bifrost_status (*send_message)(void *context, bifrost_player player, bifrost_str text) BIFROST_NOEXCEPT;
-    /* Runs done on the player's worker, same rules as spawn_task */
+    /* Runs done once, same rules as spawn_task */
     bifrost_status (*post)(void *context, bifrost_player player, bifrost_task_done_fn done, void *user) BIFROST_NOEXCEPT;
     bifrost_status (*register_command_info)(void *context, const bifrost_command_info *info) BIFROST_NOEXCEPT;
     /* Check BIFROST_HOST_HAS(host, set_description) first */
@@ -433,7 +433,8 @@ typedef struct bifrost_host {
     /* Writes replacement and replacement_len; return BIFROST_PACKET_REPLACE to apply it. */
     bifrost_status (*encode_packet)(void *context, bifrost_packet *packet, bifrost_packet_type type, const void *data, size_t size) BIFROST_NOEXCEPT;
     /* Check BIFROST_HOST_HAS before queuing a copy from any thread, with optional delivery through done and no listener calls.
-       Supports Text and PlayerSkin to either target, ToastRequest, NetworkStackLatency and ModalFormRequest to players, and ScriptMessage or RequestChunkRadius to backends, in game on main sub-clients up to 131072 bytes. */
+       Supports Text and PlayerSkin to either target, ToastRequest, NetworkStackLatency, ModalFormRequest, UpdateBlock,
+       SetActorData, InventorySlot and CorrectPlayerMovePrediction to players, and ScriptMessage or RequestChunkRadius to backends, in game on main sub-clients up to 131072 bytes. */
     bifrost_status (*send_packet)(void *context, bifrost_player player, bifrost_packet_target target, bifrost_str bytes, bifrost_task_done_fn done, void *user) BIFROST_NOEXCEPT;
     bifrost_status (*player_info)(void *context, bifrost_player player, bifrost_player_info *out, size_t capacity) BIFROST_NOEXCEPT;
     bifrost_status (*network_stats)(void *context, bifrost_player player, bifrost_packet_target target, bifrost_network_stats *out, size_t capacity) BIFROST_NOEXCEPT;

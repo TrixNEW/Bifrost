@@ -69,7 +69,6 @@ pub const Env = struct {
 };
 
 env: *const Env,
-// The player's connection, owned by the link
 session: ?Peer,
 address: std.Io.net.IpAddress,
 backend: ?Peer = null,
@@ -157,7 +156,6 @@ pub fn release(self: *Link) void {
     self.destroy();
 }
 
-/// Records why the player is leaving; the first cause wins.
 pub fn ending(self: *Link, reason: []const u8, err: ?anyerror) void {
     if (self.end_reason != null) return;
     self.end_reason = reason;
@@ -181,7 +179,6 @@ fn logEnd(self: *const Link) void {
         log.info("{f} left {s} after {f}: {s}", .{ self.who(), backend, lasted, reason });
 }
 
-/// The player's display name, empty until they logged in.
 pub fn name(self: *const Link) []const u8 {
     return self.name_storage[0..self.name_len];
 }
@@ -569,7 +566,6 @@ fn pause(self: *Link) void {
     self.env.stats.bump(.backlog_pauses, 1);
 }
 
-// Not reading the backend lets its own flow control slow it down.
 fn stalled(self: *Link) bool {
     if (self.playerBacklogged()) return true;
     const managed = self.managed orelse return false;
@@ -835,7 +831,6 @@ fn onBackendMessage(self: *Link, message: NetherNet.Message) void {
     defer self.publishState();
     if (self.session == null) return;
     const session = &self.session.?;
-    // A gone player can't take this, but what it sent last still drains to the backend.
     if (!session.open()) return;
     const payload = message.data;
     if (message.reliability != .reliable) {

@@ -60,7 +60,6 @@ pub fn dialFailed(self: *Router, io: std.Io, id: Backend.Id) void {
     health.recheck.set(io);
 }
 
-/// Holds a place on a transfer target, or says why it can't take the player.
 pub fn claimTarget(self: *Router, id: Backend.Id) error{ BackendDown, BackendDraining, BackendFull }!void {
     const health = self.health orelse return;
     if (health.status(id) == .unhealthy) return error.BackendDown;

@@ -1,4 +1,3 @@
-//! NetherNet ends for tests and benchmarks: a poll-style server standing in for backends, and dialing players.
 const std = @import("std");
 const nethernet = @import("nethernet");
 

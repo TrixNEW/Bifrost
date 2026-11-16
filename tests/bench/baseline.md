@@ -1561,3 +1561,9 @@ running): 62% of the worker's busy samples were in the kernel sending a UDP data
 So the cost of a player is one syscall and one DTLS record per message each way, inside libdatachannel, and
 `-- scale` shows what that buys: one worker carries about 500 players at 20 messages a second each. Cutting it
 needs datagram batching in libjuice or SCTP bundling across a worker's turn, not anything in Bifrost.
+
+Tests at rc.16: Windows ReleaseSafe 356 of 356, a ReleaseSafe stress pass 169 of 169 and bench-test 12 of 12; Linux
+ReleaseSafe 356 of 356 and ThreadSanitizer 356 of 356 with no reports; `fuzz-test --fuzz=1M` passes now that its
+list of injectable packets matches what validation accepts. The Windows Debug suite (354 of 356, 2 skipped) ran
+before the last refactors, which the ReleaseSafe and TSan runs cover. The ReleaseFast suite and a real client were
+not run.

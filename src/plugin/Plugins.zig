@@ -332,7 +332,6 @@ pub fn isLoaded(self: *const Plugins, name: []const u8) bool {
 }
 
 pub fn unload(self: *Plugins) void {
-    self.admission = null;
     self.stopping.store(true, .release);
     const outer = Work.enter();
     defer Work.hosted = outer;
@@ -359,6 +358,8 @@ pub fn unload(self: *Plugins) void {
         self.gpa.free(loaded.metrics);
         self.gpa.destroy(loaded);
     }
+    // Plugin threads compare against this until their shutdown returns
+    self.admission = null;
 }
 
 pub fn attachWorker(self: *Plugins, worker: u32, notify: Notify) void {

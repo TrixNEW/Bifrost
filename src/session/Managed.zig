@@ -254,7 +254,7 @@ pub fn deliver(self: *Managed, ends: Ends, packets: []const []const u8) !usize {
         if (kind == .available_commands) if (self.pluginCommands()) |plugins| {
             bytes = self.advertise(arena.allocator(), plugins, bytes) orelse bytes;
         };
-        _ = try batch.add(kind, bytes);
+        _ = try batch.add(header.header.packet_id, bytes);
     }
     try batch.flush();
     return skipped;
@@ -290,7 +290,8 @@ const Batch = struct {
     added: usize = 0,
 
     // Returns what was queued, or null if a plugin cancelled the packet
-    fn add(self: *Batch, kind: ?protocol.PacketKind, bytes: []const u8) !?[]const u8 {
+        const kind = Current.packetKind(id);
+    fn add(self: *Batch, id: u10, bytes: []const u8) !?[]const u8 {
         const shared = self.managed.shared;
         var packet = bytes;
         if (self.count == shared.batch.len) try self.flush();
@@ -301,7 +302,7 @@ const Batch = struct {
             defer span.end();
             packet = try swap.apply(shared.translated.allocator(), kind, packet, protocolLimits()) orelse packet;
         };
-        if (self.table) |table| if (Packets.packetId(packet)) |id| {
+        if (self.table) |table| {
             const in_game = self.managed.player.state == .in_game;
             if (table.wants(id, in_game)) {
                 if (shared.scratch.len == 0) shared.scratch = try self.managed.gpa.alloc(u8, Packets.scratch_bytes);
@@ -320,7 +321,7 @@ const Batch = struct {
                     .replace => |replacement| packet = try shared.translated.allocator().dupe(u8, replacement),
                 }
             }
-        };
+        }
         if (!self.to_player and kind == .command_request) if (shared.hooks) |hooks| if (hooks.plugins.hasCommands()) command: {
             const envelope = try decode(packet);
             // A split-screen guest shares the host's handle and XUID, so its commands go to the backend
@@ -629,9 +630,9 @@ pub fn fromBackend(self: *Managed, ends: Ends, payload: []const u8) !void {
             errdefer batch.discard();
             var next_state: ?bedwire.State = null;
             for (self.early.items()) |bytes| {
-                const kind = Current.packetKind(Packets.packetId(bytes) orelse return error.MalformedBatch);
-                const sent = try batch.add(kind, bytes) orelse continue;
-                if (try self.sentToBackend(kind, sent)) |state| next_state = state;
+                const id = Packets.packetId(bytes) orelse return error.MalformedBatch;
+                const sent = try batch.add(id, bytes) orelse continue;
+                if (try self.sentToBackend(Current.packetKind(id), sent)) |state| next_state = state;
             }
             try batch.flush();
             if (next_state) |state| try self.advance(state);
@@ -710,7 +711,7 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame:
             try self.early.push(self.gpa, packet.bytes);
             continue;
         }
-        const sent = try batch.add(kind, packet.bytes) orelse continue;
+        const sent = try batch.add(packet.id, packet.bytes) orelse continue;
         if (sent.ptr != packet.bytes.ptr) intact = false;
         if (try self.sentToBackend(kind, sent)) |state| next_state = state;
     }
@@ -756,10 +757,6 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
     while (packets.next()) |packet| {
         total += 1;
         const kind = Current.packetKind(packet.id);
-        var bytes = packet.bytes;
-        if (kind == .available_commands) if (self.pluginCommands()) |plugins| {
-            bytes = self.advertise(arena.allocator(), plugins, bytes) orelse bytes;
-        };
         if (self.syncing and kind == .play_status) {
             if ((try typed(try decode(packet.bytes), .play_status)).status == .playerspawn) {
                 self.target_spawned = true;
@@ -789,13 +786,18 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
                     self.client_dimension = start.settings.spawn_settings.dimension;
                 }
             }
+        // Held packets go through `deliver` later, which adds the plugin commands then
         }
         if (self.hold) |hold| {
-            try hold.push(self.gpa, bytes);
+            try hold.push(self.gpa, packet.bytes);
             continue;
         }
         if (self.player.state == .resource_packs) try self.capturePacks(kind, packet.bytes);
-        const sent = try batch.add(kind, bytes) orelse continue;
+        var bytes = packet.bytes;
+        if (kind == .available_commands) if (self.pluginCommands()) |plugins| {
+            bytes = self.advertise(arena.allocator(), plugins, bytes) orelse bytes;
+        };
+        const sent = try batch.add(packet.id, bytes) orelse continue;
         if (sent.ptr != packet.bytes.ptr) intact = false;
         if (kind == .start_game) start_game = true;
     }

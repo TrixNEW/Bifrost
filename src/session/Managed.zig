@@ -372,7 +372,9 @@ const Batch = struct {
         const packets = self.managed.shared.batch[0..self.count];
         self.count = 0;
         if (self.to_player) return self.managed.sendToPlayer(self.ends, packets);
-        const backend = self.ends.backend orelse return if (self.managed.orphaned) {} else error.BackendClosed;
+        // A backend that kicked the player takes nothing more, and until the move commits there's nowhere else to send it
+        if (self.managed.held_kick != null) return;
+        const backend = self.ends.backend orelse return if (self.managed.moving) {} else error.BackendClosed;
         try self.managed.upstream.send(self.managed.upstreamContext(self.ends, backend), packets);
     }
 
@@ -599,6 +601,8 @@ fn charge(self: *Managed, ends: Ends, bytes: usize) !void {
     return error.Flooding;
 }
 
+    // Bedwire refuses anything after a Disconnect, and the backend that sent it is on its way out
+    if (self.held_kick != null) return;
 pub fn fromBackend(self: *Managed, ends: Ends, payload: []const u8) !void {
     if (self.relayable(.from_backend)) {
         if (try relay(&self.upstream.session, &self.player, ends.player, ends.stats, .bytes_to_player, payload)) return relayed(ends.stats, payload);

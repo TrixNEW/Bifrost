@@ -136,6 +136,21 @@ test "a backend that sends the player on, kicks them and closes doesn't take the
     try std.testing.expectEqual(@as(u64, 1), rig.stats().backend_redirects);
 }
 
+test "a player who keeps playing after the old backend's kick still moves" {
+    var rig: Rig = undefined;
+    try rig.start(.{});
+    defer rig.deinit();
+    var transfer: [128]u8 = undefined;
+    var kick: [128]u8 = undefined;
+    // The backend stays connected, so what the player sends next would still reach it
+    try rig.player.relay(&.{ try backendTransfer(&transfer, "127.0.0.1", rig.b.address().getPort()), try kickPacket(&kick) });
+    var buffer: [32]u8 = undefined;
+    for (0..3) |_| try rig.player.send(&.{try managed.rawPacket(&buffer, managed.game_packet_id, "still here")});
+    try rig.waitFor(.transfers_committed, 1);
+    try rig.expectOn(&rig.b);
+    try std.testing.expectEqual(@as(usize, 0), rig.player.received(.disconnect));
+}
+
 test "a kick held back during a move that fails still reaches the player" {
     var rig: Rig = undefined;
     try rig.start(.{ .phase_timeout_ms = 1_000 });

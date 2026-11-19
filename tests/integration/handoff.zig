@@ -271,6 +271,52 @@ test "what the old backend showed is cleared once, before the new world" {
     try std.testing.expectEqual(@as(usize, 1), player.received(.container_close));
 }
 
+test "commands and block actions from before the handoff stay off the target" {
+    var rig: Rig = undefined;
+    try rig.start(.{});
+    defer rig.deinit();
+
+    rig.player.hold_acks = true;
+    try rig.transfer(1);
+    try waitForChanges(&rig, 1);
+
+    var buffers: [4][128]u8 = undefined;
+    const command = try managed.typedPacket(&buffers[0], .{ .command_request = .{
+        .command = "/say hi",
+        .origin = .{ .type = "player", .uuid = @splat(0), .request_id = "", .player_id = 0 },
+        .is_internal = false,
+        .version = "latest",
+    } });
+    const action = try managed.typedPacket(&buffers[1], .{ .player_action = .{
+        .player_runtime_id = rig.player.runtime_id,
+        .action = .startdestroyblock,
+        .block_position = .{ .x = 0, .y = 0, .z = 0 },
+        .result_pos = .{ .x = 0, .y = 0, .z = 0 },
+        .face = 0,
+    } });
+    const request = try managed.typedPacket(&buffers[2], .{ .sub_chunk_request = .{
+        .dimension_type = overworld,
+        .sub_chunk_position_offset_list = .empty,
+        .center_pos = .{ .x = 0, .y = 4, .z = 0 },
+    } });
+    const initialized = try managed.typedPacket(&buffers[3], .{
+        .set_local_player_as_initialised = .{ .player_id = rig.player.runtime_id },
+    });
+    try rig.player.send(&.{ command, action, initialized, request });
+    try fixtures.waitFor(io, &rig.b.sub_chunk_requests, 1);
+    try std.testing.expectEqual(@as(u32, 0), rig.b.commands.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 0), rig.b.seen_runtime.len.load(.acquire));
+    try std.testing.expectEqual(@as(u32, 0), rig.b.spawns.load(.acquire));
+
+    try rig.player.releaseAcks();
+    try rig.waitFor(.transfers_committed, 1);
+    try rig.player.send(&.{ command, action, request });
+    try fixtures.waitFor(io, &rig.b.sub_chunk_requests, 2);
+    try std.testing.expectEqual(@as(u32, 1), rig.b.commands.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 1), rig.b.seen_runtime.len.load(.acquire));
+    try std.testing.expectEqual(@as(u32, 1), rig.b.spawns.load(.acquire));
+}
+
 test "a client ack before the target spawns waits for the spawn" {
     var rig: Rig = undefined;
     try rig.start(.{});

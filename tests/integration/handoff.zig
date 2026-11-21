@@ -140,12 +140,17 @@ test "a player who keeps playing after the old backend's kick still moves" {
     var rig: Rig = undefined;
     try rig.start(.{});
     defer rig.deinit();
+    rig.b.hold_login.store(true, .release);
     var transfer: [128]u8 = undefined;
     var kick: [128]u8 = undefined;
-    // The backend stays connected, so what the player sends next would still reach it
     try rig.player.relay(&.{ try backendTransfer(&transfer, "127.0.0.1", rig.b.address().getPort()), try kickPacket(&kick) });
+    try fixtures.waitFor(io, &rig.b.logins, 1);
+    const echoes = rig.a.echoes.load(.acquire);
     var buffer: [32]u8 = undefined;
     for (0..3) |_| try rig.player.send(&.{try managed.rawPacket(&buffer, managed.game_packet_id, "still here")});
+    try pumpFor(rig.player, 100);
+    try std.testing.expectEqual(echoes, rig.a.echoes.load(.acquire));
+    rig.b.hold_login.store(false, .release);
     try rig.waitFor(.transfers_committed, 1);
     try rig.expectOn(&rig.b);
     try std.testing.expectEqual(@as(usize, 0), rig.player.received(.disconnect));
@@ -164,6 +169,9 @@ test "a kick held back during a move that fails still reaches the player" {
     try std.testing.expectEqual(@as(usize, 0), rig.player.received(.disconnect));
     try rig.waitFor(.transfers_timed_out, 1);
     try rig.pumpUntil(rig.player, kicked);
+    try rig.player.awaitClosed();
+    try rig.running.waitForStat(.links_closed, 1);
+    try fixtures.waitFor(io, &rig.a.disconnects, 1);
 }
 
 test "a backend's Transfer anywhere else is dropped" {
@@ -271,7 +279,7 @@ test "what the old backend showed is cleared once, before the new world" {
     try std.testing.expectEqual(@as(usize, 1), player.received(.container_close));
 }
 
-test "commands and block actions from before the handoff stay off the target" {
+test "gameplay actions from before the handoff stay off the target" {
     var rig: Rig = undefined;
     try rig.start(.{});
     defer rig.deinit();
@@ -280,7 +288,7 @@ test "commands and block actions from before the handoff stay off the target" {
     try rig.transfer(1);
     try waitForChanges(&rig, 1);
 
-    var buffers: [4][128]u8 = undefined;
+    var buffers: [5][128]u8 = undefined;
     const command = try managed.typedPacket(&buffers[0], .{ .command_request = .{
         .command = "/say hi",
         .origin = .{ .type = "player", .uuid = @splat(0), .request_id = "", .player_id = 0 },
@@ -302,7 +310,14 @@ test "commands and block actions from before the handoff stay off the target" {
     const initialized = try managed.typedPacket(&buffers[3], .{
         .set_local_player_as_initialised = .{ .player_id = rig.player.runtime_id },
     });
-    try rig.player.send(&.{ command, action, initialized, request });
+    const animate = try managed.typedPacket(&buffers[4], .{ .animate = .{
+        .action = .swing,
+        .target_actor_runtime_id = rig.player.runtime_id,
+        .data = 0,
+        .swing_source = null,
+        .hand = .mainhand,
+    } });
+    try rig.player.send(&.{ command, action, animate, initialized, request });
     try fixtures.waitFor(io, &rig.b.sub_chunk_requests, 1);
     try std.testing.expectEqual(@as(u32, 0), rig.b.commands.load(.acquire));
     try std.testing.expectEqual(@as(usize, 0), rig.b.seen_runtime.len.load(.acquire));
@@ -310,11 +325,35 @@ test "commands and block actions from before the handoff stay off the target" {
 
     try rig.player.releaseAcks();
     try rig.waitFor(.transfers_committed, 1);
-    try rig.player.send(&.{ command, action, request });
+    try rig.player.send(&.{ command, action, animate, request });
     try fixtures.waitFor(io, &rig.b.sub_chunk_requests, 2);
     try std.testing.expectEqual(@as(u32, 1), rig.b.commands.load(.acquire));
-    try std.testing.expectEqual(@as(usize, 1), rig.b.seen_runtime.len.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 2), rig.b.seen_runtime.len.load(.acquire));
     try std.testing.expectEqual(@as(u32, 1), rig.b.spawns.load(.acquire));
+}
+
+test "a target kick reaches a client still waiting for the new dimension" {
+    var rig: Rig = undefined;
+    try rig.start(.{ .b = .kick_on_sub_chunk });
+    defer rig.deinit();
+    rig.player.hold_acks = true;
+
+    try rig.transfer(1);
+    try waitForChanges(&rig, 1);
+    var buffer: [64]u8 = undefined;
+    const request = try managed.typedPacket(&buffer, .{ .sub_chunk_request = .{
+        .dimension_type = overworld,
+        .sub_chunk_position_offset_list = .empty,
+        .center_pos = .{ .x = 0, .y = 4, .z = 0 },
+    } });
+    try rig.player.send(&.{request});
+
+    try rig.pumpUntil(rig.player, kicked);
+    try rig.player.awaitClosed();
+    try rig.running.waitForStat(.links_closed, 1);
+    try fixtures.waitFor(io, &rig.b.disconnects, 1);
+    try std.testing.expectEqual(@as(u32, 0), rig.b.spawns.load(.acquire));
+    try std.testing.expectEqual(@as(u64, 1), rig.stats().transfers_failed_after_commit);
 }
 
 test "a client ack before the target spawns waits for the spawn" {

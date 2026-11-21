@@ -87,6 +87,7 @@ test "a client that never acknowledges the switch times out and is disconnected"
     try rig.player.awaitClosed();
     try std.testing.expectEqual(@as(u64, 0), rig.stats().transfers_committed);
     try fixtures.waitFor(io, &rig.b.disconnects, 1);
+    try std.testing.expectEqual(@as(u32, 0), rig.b.spawns.load(.acquire));
 }
 
 test "a target that stalls pack negotiation times out and the player stays" {

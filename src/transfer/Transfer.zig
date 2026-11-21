@@ -327,6 +327,14 @@ fn on(self: *Transfer, host: Host, event: State.Event) void {
         .close_source => {
             if (self.source) |*source| source.destroy();
             self.source = null;
+            if (!host.player.open()) return self.on(host, .player_left);
+            if (self.state.expired(clock.ns(host.io))) return self.on(host, .expired);
+            host.managed.spawnTarget(host.ends()) catch |err| {
+                log.debug("Transfer {d} couldn't activate the target: {t}", .{ self.state.epoch, err });
+                return self.on(host, .target_failed);
+            };
+            host.managed.syncing = false;
+            host.managed.gameplay.synced();
             return self.on(host, .source_closed);
         },
         .finish => {
@@ -401,7 +409,8 @@ fn release(self: *Transfer, host: Host) !void {
 
 pub fn syncClient(self: *Transfer, host: Host) !void {
     const managed = host.managed;
-    if (self.state.phase != .syncing_client) return;
+    if (self.result != .running or self.state.phase != .syncing_client) return;
+    if (self.state.expired(clock.ns(host.io))) return self.on(host, .expired);
     while (managed.dimension_acks != 0 and !self.handoff.?.arrived()) {
         managed.dimension_acks -= 1;
         var outbox: Managed.Outbox = .init(host.gpa);
@@ -413,9 +422,6 @@ pub fn syncClient(self: *Transfer, host: Host) !void {
     }
     // The client's ack and the target's spawn can land in either order
     if (!self.handoff.?.arrived() or !managed.target_spawned) return;
-    managed.syncing = false;
-    managed.gameplay.synced();
-    try managed.spawnTarget(host.ends());
     self.on(host, .client_synced);
 }
 

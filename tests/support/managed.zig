@@ -313,7 +313,7 @@ pub const Backend = struct {
         carrier: *net.Server.Client,
     };
 
-    pub const Mode = enum { normal, silent_login, kick_login, silent_stack, kick_packs, welcome, flood, chatter, spawn_first, early_start, double_stack };
+    pub const Mode = enum { normal, silent_login, kick_login, silent_stack, kick_packs, welcome, flood, chatter, spawn_first, early_start, double_stack, kick_on_sub_chunk };
     pub const scene_entities = 200;
 
     io: std.Io,
@@ -725,7 +725,13 @@ pub const Backend = struct {
                 self.cache_supported.store(status.is_cache_supported, .release);
                 _ = self.cache_reports.fetchAdd(1, .release);
             },
-            .sub_chunk_request => _ = self.sub_chunk_requests.fetchAdd(1, .release),
+            .sub_chunk_request => {
+                _ = self.sub_chunk_requests.fetchAdd(1, .release);
+                if (self.mode == .kick_on_sub_chunk) try sendFrame(session, carrier, &.{try typedPacket(&buffer, .{ .disconnect = .{
+                    .reason = .disconnected,
+                    .messages = .{ .messages = .{ .message = "World unavailable", .filtered_message = "" } },
+                } })});
+            },
             .set_local_player_as_initialised => {
                 if (session.state == .spawn_ready) try session.advance(.in_game);
                 _ = self.spawns.fetchAdd(1, .release);

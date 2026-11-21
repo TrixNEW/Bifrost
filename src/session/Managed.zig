@@ -354,7 +354,7 @@ const Batch = struct {
             const reused = if (self.to_player)
                 managed.upstream.session.canRelayTo(&managed.player) and try relay(&managed.upstream.session, &managed.player, self.ends.player, stats, .bytes_to_player, frame)
             else if (self.ends.backend) |backend|
-                managed.player.canRelayTo(&managed.upstream.session) and try relay(&managed.player, &managed.upstream.session, backend, stats, .bytes_to_backend, frame)
+                managed.held_kick == null and managed.player.canRelayTo(&managed.upstream.session) and try relay(&managed.player, &managed.upstream.session, backend, stats, .bytes_to_backend, frame)
             else
                 false;
             if (reused) {
@@ -746,6 +746,7 @@ fn takeHandoffAck(self: *Managed) bool {
 
 fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame: []const u8) !void {
     var start_game = false;
+    var kicked = false;
     var batch = self.newBatch(ends, true);
     errdefer batch.discard();
     var arena: std.heap.ArenaAllocator = .init(self.gpa);
@@ -786,10 +787,10 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
             }
         }
         // Held packets go through `deliver` later, which adds the plugin commands then
-        if (self.hold) |hold| {
+        if (self.hold) |hold| if (kind != .disconnect) {
             try hold.push(self.gpa, packet.bytes);
             continue;
-        }
+        };
         if (self.player.state == .resource_packs) try self.capturePacks(kind, packet.bytes);
         var bytes = packet.bytes;
         if (kind == .available_commands) if (self.pluginCommands()) |plugins| {
@@ -798,9 +799,10 @@ fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame
         const sent = try batch.add(packet.id, bytes) orelse continue;
         if (sent.ptr != packet.bytes.ptr) intact = false;
         if (kind == .start_game) start_game = true;
+        if (kind == .disconnect) kicked = true;
     }
     try batch.finish(frame, total, intact);
-    if (start_game) try self.advance(.spawn_ready);
+    if (kicked) self.player.beginClose() else if (start_game) try self.advance(.spawn_ready);
 }
 
 // A Transfer to a listed backend moves the player inside the proxy. Anywhere else would hand a server the
@@ -830,6 +832,7 @@ pub fn releaseKick(self: *Managed, ends: Ends) !void {
     const kick = self.held_kick orelse return;
     defer self.dropKick();
     try self.sendToPlayer(ends, &.{kick});
+    self.player.beginClose();
 }
 
 pub fn dropKick(self: *Managed) void {

@@ -550,7 +550,8 @@ fn followRedirect(self: *Link) void {
             return;
         } else |err| transfer_log.debug("{f}'s backend asked to move them to {s}, which can't happen now: {t}", .{ self.who(), self.env.router.get(target).name(), err });
     };
-    managed.releaseKick(self.ends()) catch |err| self.fail(err);
+    managed.releaseKick(self.ends()) catch |err| return self.fail(err);
+    self.closeIfKicked(managed);
 }
 
 // Keeps reading a closing peer, or its sends stall and our own close can't finish
@@ -843,11 +844,16 @@ fn onBackendMessage(self: *Link, message: NetherNet.Message) void {
         if (self.managed == null) session.sendAs(payload, .unreliable) catch self.closeSession() else self.env.stats.bump(.unreliable_dropped, 1);
         return;
     }
-    if (self.managed) |managed| return managed.fromBackend(self.ends(), payload) catch |err| {
-        log.debug("Managed session of {f} failed on a backend packet: {t}", .{ self.who(), err });
-        self.ending("backend sent something the proxy can't handle", err);
-        self.backend_error = err;
-    };
+    if (self.managed) |managed| {
+        managed.fromBackend(self.ends(), payload) catch |err| {
+            log.debug("Managed session of {f} failed on a backend packet: {t}", .{ self.who(), err });
+            self.ending("backend sent something the proxy can't handle", err);
+            self.backend_error = err;
+            return;
+        };
+        self.closeIfKicked(managed);
+        return;
+    }
     const observer = &self.observer.?;
     if (observer.watching and self.observe(observer, .server_to_client, payload).rejects()) {
         self.backend_error = error.LoginRejected;
@@ -882,6 +888,12 @@ fn cancelDial(self: *Link) void {
     var task = self.dial_task orelse return;
     self.dial_task = null;
     self.dial.cancel(&task, self.env.io);
+}
+
+fn closeIfKicked(self: *Link, managed: *const Managed) void {
+    if (managed.player.state != .closing) return;
+    self.ending("backend disconnected the player", null);
+    self.closeSession();
 }
 
 fn fail(self: *Link, err: anyerror) void {

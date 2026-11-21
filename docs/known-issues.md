@@ -47,12 +47,10 @@ What's open as of 2.0.0-rc.16. Details live in the linked docs.
   benchmark stops gaining, with every thread in the proxy at half a core or less, and a larger
   `[nethernet] threads` pool doesn't change that reliably. See `tests/bench/baseline.md`.
 - **A transfer logs the player in to the target while they still play on the old backend.** That overlap is what
-  lets a failed transfer go unnoticed, and it lasts from the target's Login to the switch: usually tens of
-  milliseconds, at most `[transfer] timeout_ms`. Backends that share player data must not read it at login and
-  assume the old backend is done with it. An item the player moves on the old backend after the target loaded
-  their inventory would exist twice. Load on spawn, or lock or save the data when the old backend sends the player
-  on. Bifrost doesn't hold the player's packets back during the overlap, since a transfer that then failed would
-  leave them out of step with the backend they stayed on.
+  lets a failed transfer go unnoticed. At the switch, Bifrost fences off source gameplay and closes the source
+  transport before activating the player on the target. Quark reads player data during login, and a source
+  disconnect can still be saving it when the target activates. Backends that share writable player data must
+  coordinate the handoff and wait for the source save before using player state on the target.
 - **Transfers rebuild only part of the target's StartGame.** Its time, difficulty, commands flag, game rules and
   weather are sent as their own packets; other world settings in it (world spawn, default game mode, experiments)
   only reach the client if the target sends them again. Volume entities and NPC dialogue the old backend opened

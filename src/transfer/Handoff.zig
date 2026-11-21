@@ -110,6 +110,8 @@ pub fn staleDuringSync(kind: ?protocol.PacketKind) bool {
         .item_stack_request,
         .mob_equipment,
         .interact,
+        .animate,
+        .emote,
         .actor_pick_request,
         .block_pick_request,
         .block_actor_data,

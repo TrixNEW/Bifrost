@@ -1567,3 +1567,22 @@ and bench-test 12 of 12; Linux ReleaseSafe 357 of 357 and ThreadSanitizer 357 of
 `fuzz-test --fuzz=1M` passes now that its list of injectable packets matches what validation accepts. The Windows
 ReleaseSafe and stress runs predate the last review fixes (one more unit test, a few lines in `Link` and `Peer`),
 which the Windows Debug and both Linux runs cover. The ReleaseFast suite and a real client were not run.
+
+## nethernet-zig 1.12.0
+
+Linux (WSL2 Ubuntu 24.04, 12 threads), ReleaseFast, `-- relay workers`, two alternating rounds of the same
+Bifrost tree against nethernet-zig 1.11.2 and 1.12.0, each with its own patched libdatachannel. Round trips/s:
+
+| payload | load | 1.11.2 | 1.12.0 | p50 us, 1.11.2 / 1.12.0 |
+|---|---|---|---|---|
+| 64 B | 1x1 | 1214, 1090 | 1598, 1416 | 794 / 614, 891 / 685 |
+| 512 B | 1x1 | 1198, 1204 | 1385, 1343 | 827 / 701, 810 / 721 |
+| 8 KiB | 1x1 | 449, 443 | 515, 529 | 2173 / 1866, 2193 / 1853 |
+| 20 KiB | 1x1 | 223, 225 | 249, 257 | 4480 / 3953, 4384 / 3893 |
+| 512 B | 8x32 | 13716, 13528 | 13536, 14125 | |
+
+Workers at 1 / 2 / 4 / 8 stayed within run-to-run noise (12.6k to 16.7k either way). Two libdatachannel changes
+do it: SCTP no longer queues a pool task for every acknowledgement, only while a send waits for buffer space, and
+each idle pool worker waits on its own condition, so handing a datagram to the pool no longer blocks the one ICE
+thread until workers woken earlier have run. Loaded queues are unchanged, since the driver process saturates
+first. Tests: Windows ReleaseSafe 174 of 175 (1 skipped).

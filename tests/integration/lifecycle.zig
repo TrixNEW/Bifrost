@@ -182,14 +182,16 @@ test "a leaving player's packets still arrive when the proxy had paused reading 
     var player: Player = try .connect(io, running.address());
     defer player.deinit();
     try player.roundTrip("\xfehello");
-    // The worker takes this every turn, so holding it stalls the worker
-    running.proxy.mailbox_mutex.lockUncancelable(io);
     var payload: [8000]u8 = @splat(7);
     payload[0] = 0xfe;
     const burst = 100;
-    for (0..burst) |_| try player.send(&payload);
-    try player.leave();
-    running.proxy.mailbox_mutex.unlock(io);
+    {
+        // The worker takes this every turn, so holding it stalls the worker.
+        running.proxy.mailbox_mutex.lockUncancelable(io);
+        defer running.proxy.mailbox_mutex.unlock(io);
+        for (0..burst) |_| try player.send(&payload);
+        try player.leave();
+    }
 
     try running.waitForStat(.messages_to_backend, burst + 1);
     try fixtures.waitFor(io, &backend.disconnects, 1);

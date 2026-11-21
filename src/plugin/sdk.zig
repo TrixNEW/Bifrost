@@ -3,6 +3,7 @@ pub const abi = @import("abi.zig");
 
 pub const Player = abi.Player;
 pub const PlayerInfo = abi.PlayerInfo;
+pub const PlayerAccount = abi.PlayerAccount;
 pub const NetworkStats = abi.NetworkStats;
 pub const NetworkMetric = abi.NetworkMetric;
 pub const Gameplay = abi.Gameplay;
@@ -163,6 +164,14 @@ pub const Host = struct {
         var info: PlayerInfo = undefined;
         try check(self.raw.player_info(self.raw.context, player, &info, @sizeOf(PlayerInfo)));
         return info;
+    }
+
+    /// Verified account facts. Check `available` before trusting a field.
+    pub fn playerAccount(self: Host, player: Player) Error!PlayerAccount {
+        if (!self.raw.has(.player_account)) return error.Unsupported;
+        var account: PlayerAccount = .{};
+        try check(self.raw.player_account(self.raw.context, player, &account, @sizeOf(PlayerAccount)));
+        return account;
     }
 
     pub fn findPlayer(self: Host, name_or_xuid: []const u8) Error!Player {

@@ -96,6 +96,13 @@ public:
         return info;
     }
 
+    std::optional<bifrost_player_account> player_account(bifrost_player player) const noexcept {
+        if (!BIFROST_HOST_HAS(raw_, player_account)) return std::nullopt;
+        bifrost_player_account account{};
+        if (raw_->player_account(raw_->context, player, &account, sizeof(account)) != BIFROST_STATUS_OK) return std::nullopt;
+        return account;
+    }
+
     std::optional<bifrost_player> find_player(std::string_view name_or_xuid) const noexcept {
         if (!BIFROST_HOST_HAS(raw_, find_player)) return std::nullopt;
         bifrost_player player{};

@@ -1,6 +1,6 @@
 .{
     .name = .bifrost,
-    .version = "2.0.0-rc.17",
+    .version = "2.0.0-rc.18",
     .fingerprint = 0x690b25d757c41963,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
@@ -9,8 +9,8 @@
             .hash = "nethernet-1.11.2-dprTqM8NDQCXh3AfoJvWWyu0p2iSxwArE7iowJEaoWvx",
         },
         .bedwire = .{
-            .url = "git+https://github.com/Bedrock-Phanatics/bedwire#2ed2bcad814b792378f83ad8e116e36611c0bd67",
-            .hash = "bedwire-0.8.0-6vrYrWqSIQBQgDy9o-dfrnvgqexiGk7TTtn5c3oXSwjY",
+            .url = "git+https://github.com/Bedrock-Phanatics/bedwire#224dff9bb6bdb456736d8fcabe4746c5efbb4c9c",
+            .hash = "bedwire-0.9.0-6vrYrT-nIQDiiHYeYeIqOqyhxz5HtcBTp_Gd4iDroBUZ",
         },
         .zio = .{
             .url = "git+https://github.com/lalinsky/zio#c0a6b5877c9bbc71d2d2c0b3374ce7fa61a4ec12",

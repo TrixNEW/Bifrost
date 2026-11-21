@@ -49,6 +49,7 @@ pub fn table(loaded: *Loaded) abi.Host {
         .set_client_data = hostSetClientData,
         .find_player = hostFindPlayer,
         .list_players = hostListPlayers,
+        .player_account = hostPlayerAccount,
     };
 }
 
@@ -63,6 +64,18 @@ fn hostListPlayers(context: *anyopaque, out: ?[*]abi.Player, capacity: usize, to
     const count = total orelse return .invalid_argument;
     if (out == null and capacity != 0) return .invalid_argument;
     count.* = from(context).owner.handles.list(if (out) |players| players[0..capacity] else &.{});
+    return .ok;
+}
+
+fn hostPlayerAccount(context: *anyopaque, player: abi.Player, out: ?*abi.PlayerAccount, capacity: usize) callconv(.c) abi.Status {
+    const result = out orelse return .invalid_argument;
+    if (capacity < @offsetOf(abi.PlayerAccount, "playfab_created_s")) return .invalid_argument;
+    var account: abi.PlayerAccount = undefined;
+    if (!from(context).owner.handles.copyAccount(player, &account)) return .stale_handle;
+    // A plugin built against an older, shorter layout gets exactly what fits
+    const len = @min(capacity, @sizeOf(abi.PlayerAccount));
+    account.struct_size = @intCast(len);
+    @memcpy(@as([*]u8, @ptrCast(result))[0..len], std.mem.asBytes(&account)[0..len]);
     return .ok;
 }
 

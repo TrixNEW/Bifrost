@@ -9,12 +9,12 @@ extern "C" {
 #endif
 
 /* Plugins run in-process, so a crash takes the proxy down. Callbacks run on several workers at once; never block.
-   From your own threads use log, counts, names, player_info and queued actions. Query network_stats, gameplay and entities on the player's worker.
+   From your own threads use log, counts, names, player_info, player_account and queued actions. Query network_stats, gameplay and entities on the player's worker.
    Stop your threads before shutdown returns. Anything passed in is only valid until the callback returns.
    The full contract is in docs/plugin-abi.md. */
 
 #define BIFROST_ABI_VERSION 1u
-#define BIFROST_API_REVISION 8u
+#define BIFROST_API_REVISION 9u
 #define BIFROST_NO_BACKEND UINT32_MAX
 #define BIFROST_NO_WORKER UINT32_MAX
 
@@ -89,6 +89,15 @@ typedef struct bifrost_player_info {
     uint8_t xuid[32];
     uint8_t uuid[36];
 } bifrost_player_info;
+
+#define BIFROST_ACCOUNT_PLAYFAB_CREATED (UINT32_C(1) << 0)
+
+/* Revision 9. What the verified login says about the account; a field whose bit in available is clear is unknown, not zero */
+typedef struct bifrost_player_account {
+    uint32_t struct_size;
+    uint32_t available;
+    int64_t playfab_created_s;
+} bifrost_player_account;
 
 typedef struct bifrost_login_hints {
     uint32_t device_len, client_len, self_len, address_len;
@@ -456,6 +465,8 @@ typedef struct bifrost_host {
     bifrost_status (*find_player)(void *context, bifrost_str name_or_xuid, bifrost_player *out) BIFROST_NOEXCEPT;
     /* Revision 8, any thread: copies up to capacity player handles, closing and unverified ones too, and sets total to how many there are */
     bifrost_status (*list_players)(void *context, bifrost_player *out, size_t capacity, size_t *total) BIFROST_NOEXCEPT;
+    /* Revision 9, any thread: copies what fits in capacity (at least 8 bytes) and sets out->struct_size to what it wrote. Only a Microsoft-verified login fills it */
+    bifrost_status (*player_account)(void *context, bifrost_player player, bifrost_player_account *out, size_t capacity) BIFROST_NOEXCEPT;
 } bifrost_host;
 
 /* Older hosts have a shorter table, so use this instead of sizeof */

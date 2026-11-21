@@ -37,9 +37,11 @@ pub fn connected(self: Events, route: Handles.Route, address: std.Io.net.IpAddre
     return player;
 }
 
-pub fn authenticated(self: Events, player: abi.Player, name: []const u8, xuid: []const u8, uuid: []const u8, online: bool, state: abi.PlayerState) abi.TransferDecision {
+pub fn authenticated(self: Events, player: abi.Player, name: []const u8, xuid: []const u8, uuid: []const u8, online: bool, playfab_created_s: ?i64, state: abi.PlayerState) abi.TransferDecision {
     const plugins = self.live(player) orelse return .{};
     plugins.handles.setIdentity(player, name, xuid, uuid, online);
+    // Offline identities carry nothing Microsoft signed
+    plugins.handles.setAccount(player, if (online) playfab_created_s else null);
     self.stateChanged(player, state);
     var decision: abi.TransferDecision = .{};
     plugins.emit(&.{ .kind = .player_authenticated, .player = player, .name = .of(name), .xuid = .of(xuid), .worker = self.worker }, &decision);

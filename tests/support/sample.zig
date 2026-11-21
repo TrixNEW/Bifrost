@@ -64,6 +64,10 @@ pub fn transportToken(allocator: std.mem.Allocator, key: Ecdsa.KeyPair, now: i64
     return signRsa(allocator, "{\"alg\":\"RS256\",\"kid\":\"" ++ oidc_key.kid ++ "\"}", claims);
 }
 
+/// When the sample account was created on PlayFab, as the token spells it and in Unix seconds
+pub const playfab_created = "2021-03-09T20:36:00.067Z";
+pub const playfab_created_s: i64 = 1_615_322_160;
+
 pub fn request(allocator: std.mem.Allocator, key: Ecdsa.KeyPair, client_data_signer: Ecdsa.KeyPair, name: []const u8, xuid: []const u8, now: i64) ![]u8 {
     return requestWithClientData(allocator, key, client_data_signer, name, xuid, now, "{\"SkinId\":\"bifrost-test\",\"ServerAddress\":\"proxy\"}");
 }
@@ -71,7 +75,7 @@ pub fn request(allocator: std.mem.Allocator, key: Ecdsa.KeyPair, client_data_sig
 pub fn requestWithClientData(allocator: std.mem.Allocator, key: Ecdsa.KeyPair, client_data_signer: Ecdsa.KeyPair, name: []const u8, xuid: []const u8, now: i64, payload: []const u8) ![]u8 {
     const claims = try std.fmt.allocPrint(
         allocator,
-        "{{\"iss\":\"https://authorization.franchise.minecraft-services.net/\",\"aud\":\"api://auth-minecraft-services/multiplayer\",\"exp\":{d},\"cpk\":\"{s}\",\"xname\":\"{s}\",\"xid\":\"{s}\"}}",
+        "{{\"iss\":\"https://authorization.franchise.minecraft-services.net/\",\"aud\":\"api://auth-minecraft-services/multiplayer\",\"exp\":{d},\"cpk\":\"{s}\",\"xname\":\"{s}\",\"xid\":\"{s}\",\"pfcd\":\"" ++ playfab_created ++ "\"}}",
         .{ now + 3600, bedwire.auth.login.encodedPublicKey(key.public_key), name, xuid },
     );
     defer allocator.free(claims);

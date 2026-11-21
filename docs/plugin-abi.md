@@ -69,7 +69,7 @@ never inside it.
 
 | host function | where it may be called |
 |---|---|
-| `log`, `worker_count`, `backend_count`, `backend_name`, `player_name`, `player_info`, `send_message`, `send_packet`, `post`, `disconnect`, `request_transfer` | any thread |
+| `log`, `worker_count`, `backend_count`, `backend_name`, `player_name`, `player_info`, `player_account`, `send_message`, `send_packet`, `post`, `disconnect`, `request_transfer` | any thread |
 | `network_stats`, `player_gameplay`, `find_entity`, `list_entities` | a callback on this player's worker, use `post` from other threads |
 | `transfer`, `spawn_task` | inside a callback Bifrost is running |
 | `subscribe`, `subscribe_packet`, `register_command`, `register_command_info`, `set_description` | inside `bifrost_plugin_init` |
@@ -264,6 +264,24 @@ matches. `list_players` copies up to `capacity` handles of every session the pro
 logging in or closing, and sets `total` to how many there are; pass `NULL` and 0 to only count. Handles may go stale
 right after either call.
 
+### Verified account data
+
+API revision 9 adds `player_account(player, out, capacity)`, safe from any thread. Check
+`BIFROST_HOST_HAS(host, player_account)` first and pass a `bifrost_player_account` with `sizeof(*out)`.
+Bifrost copies what fits in `capacity` (at least the 8-byte header, else `INVALID_ARGUMENT`) and sets `struct_size`
+to the bytes written, so the struct can grow at the end without breaking older plugins. A retired handle returns
+`STALE_HANDLE`. `bifrost_player_info` stays frozen, which is why this is its own call.
+
+`available` is a bit set. A field whose bit is clear is unknown, never zero:
+
+- `BIFROST_ACCOUNT_PLAYFAB_CREATED`: `playfab_created_s` is the Unix time in the token's `pfcd` claim, which is when
+  the account first signed in to Minecraft's PlayFab title. It is not the Xbox account's age.
+
+Only a login verified against Microsoft's keys fills it, read after the signature check. It stays empty for offline
+identities, chain-format logins, a token without `pfcd` and a `pfcd` that is neither Unix seconds nor an ISO 8601 UTC
+time. The value is set before `PLAYER_AUTHENTICATED` fires, so an admission plugin can decide on it before the
+backend sees the login. Treat a missing or future date according to your own policy.
+
 `state` reports the connection, session mode, connection phase, current backend and transfer state. `NO_BACKEND`
 means no backend has been selected. During the initial dial the selected backend is reported even before it connects.
 During transfer the source remains current until commit, then the target becomes current, including inside
@@ -435,7 +453,7 @@ next second, and the drop count is logged with its next line after that.
 
 - `BIFROST_ABI_VERSION` changes only for a breaking change. Each side checks the other's `abi_version` and refuses
   a mismatch: Bifrost returns an error for the plugin, a plugin should return `INCOMPATIBLE`.
-- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 8.
+- `BIFROST_API_REVISION` identifies the header's additive API revision, currently 9.
   Hosts from revision 7 expose `revision` at the end of the table. Check `BIFROST_HOST_HAS(host, revision)`
   before reading it. Continue checking each optional function with `BIFROST_HOST_HAS`. Keep the host pointer rather than copying a newer
   header's entire table from an older host. New player/network snapshot layouts are fixed in v1.
@@ -453,6 +471,8 @@ next second, and the drop count is logged with its next line after that.
 - Enums and status codes can gain values; treat unknown ones as "not for me" rather than as errors.
 
 ## Verification
+
+API revision 9 adds `player_account`, which exposes the PlayFab creation date of a verified login.
 
 API revision 8 enforces command permissions through `[commands] operators`, adds `bifrost_command.is_operator`,
 `find_player` and `list_players`.

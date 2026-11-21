@@ -34,6 +34,7 @@ const Slot = struct {
     name: [max_name_len]u8 = undefined,
     name_len: u8 = 0,
     info: abi.PlayerInfo = .{},
+    account: abi.PlayerAccount = .{},
     connected_ns: u64 = 0,
 };
 
@@ -60,6 +61,7 @@ pub fn acquire(self: *Handles, gpa: std.mem.Allocator, to: Route) !abi.Player {
     slot.route = to;
     slot.name_len = 0;
     slot.info = .{ .worker = to.worker };
+    slot.account = .{};
     slot.connected_ns = connected_ns;
     return handle(index, slot.generation);
 }
@@ -112,6 +114,22 @@ pub fn setIdentity(self: *Handles, player: abi.Player, name: []const u8, xuid: [
         @field(slot.info, field ++ "_len") = if (bytes.len <= buffer.len) @intCast(bytes.len) else 0;
         if (bytes.len <= buffer.len) @memcpy(buffer[0..bytes.len], bytes);
     }
+}
+
+/// Only for an identity Microsoft verified; a missing date leaves it unknown.
+pub fn setAccount(self: *Handles, player: abi.Player, playfab_created_s: ?i64) void {
+    self.lock.lock();
+    defer self.lock.unlock();
+    _, const slot = self.find(player) orelse return;
+    slot.account = if (playfab_created_s) |created| .{ .available = abi.account_playfab_created, .playfab_created_s = created } else .{};
+}
+
+pub fn copyAccount(self: *Handles, player: abi.Player, out: *abi.PlayerAccount) bool {
+    self.lock.lock();
+    defer self.lock.unlock();
+    _, const slot = self.find(player) orelse return false;
+    out.* = slot.account;
+    return true;
 }
 
 pub fn setState(self: *Handles, player: abi.Player, state: abi.PlayerState) ?abi.ConnectionPhase {
@@ -287,6 +305,30 @@ test "player snapshots copy identity and state without retaining session memory"
     try std.testing.expect(handles.copyInfo(next, &info));
     try std.testing.expectEqual(@as(u32, 0), info.name_len);
     try std.testing.expectEqual(@as(u32, 0), info.xuid_len);
+}
+
+test "account data is unknown until a verified login sets it, and never outlives the handle" {
+    const gpa = std.testing.allocator;
+    var handles: Handles = .{};
+    defer handles.deinit(gpa);
+    var context: u8 = 0;
+    const player = try handles.acquire(gpa, .{ .context = &context, .link = 1, .transfer = noTransfer });
+    var account: abi.PlayerAccount = undefined;
+    try std.testing.expect(handles.copyAccount(player, &account));
+    try std.testing.expectEqual(@as(u32, 0), account.available);
+    handles.setAccount(player, 1_615_322_160);
+    try std.testing.expect(handles.copyAccount(player, &account));
+    try std.testing.expectEqual(abi.account_playfab_created, account.available);
+    try std.testing.expectEqual(@as(i64, 1_615_322_160), account.playfab_created_s);
+    handles.setAccount(player, null);
+    try std.testing.expect(handles.copyAccount(player, &account));
+    try std.testing.expectEqual(@as(u32, 0), account.available);
+    handles.setAccount(player, 5);
+    handles.release(player);
+    try std.testing.expect(!handles.copyAccount(player, &account));
+    const next = try handles.acquire(gpa, .{ .context = &context, .link = 2, .transfer = noTransfer });
+    try std.testing.expect(handles.copyAccount(next, &account));
+    try std.testing.expectEqual(@as(u32, 0), account.available);
 }
 
 test "generation exhaustion never revives a released player handle" {

@@ -402,7 +402,7 @@ fn announce(self: *Link, identity: bedwire.Identity) void {
     self.logJoin();
     log.debug("{f} has xuid {s}, {s}", .{ self.who(), identity.xuid, if (identity.online) "signed in to Xbox" else "offline" });
     self.published = self.playerState();
-    const decision = self.env.events.authenticated(self.player, identity.display_name, identity.xuid, identity.uuid, identity.online, self.published);
+    const decision = self.env.events.authenticated(self.player, identity.display_name, identity.xuid, identity.uuid, identity.online, identity.playfab_created_s, self.published);
     if (decision.action == .cancel) {
         self.ending("rejected by a plugin", null);
         _ = self.disconnect("Login rejected");

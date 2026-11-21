@@ -3,6 +3,7 @@ const protocol = @import("bedrock_protocol");
 const bifrost = @import("bifrost");
 const fixtures = @import("../support/fixtures.zig");
 const managed = @import("../support/managed.zig");
+const sample = @import("../support/sample.zig");
 const Rig = @import("../support/rig.zig").Rig;
 const test_options = @import("test_options");
 const header = @import("bifrost_plugin_h");
@@ -509,6 +510,7 @@ test "the C header matches the Zig ABI" {
         .{ abi.CommandInfo, header.bifrost_command_info },
         .{ abi.PlayerState, header.bifrost_player_state },
         .{ abi.PlayerInfo, header.bifrost_player_info },
+        .{ abi.PlayerAccount, header.bifrost_player_account },
         .{ abi.LoginHints, header.bifrost_login_hints },
         .{ abi.NetworkStats, header.bifrost_network_stats },
         .{ abi.Vec3, header.bifrost_vec3 },
@@ -545,6 +547,7 @@ test "the C header matches the Zig ABI" {
     try expectConstants(abi.AttributeKind, "BIFROST_ATTRIBUTE_");
     try std.testing.expectEqual(abi.AttributeKind.count, header.BIFROST_ATTRIBUTE_COUNT);
     try expectFlags(abi.NetworkMetric, "BIFROST_NETWORK_");
+    try std.testing.expectEqual(abi.account_playfab_created, header.BIFROST_ACCOUNT_PLAYFAB_CREATED);
     try expectFlags(abi.GameplayField, "BIFROST_GAMEPLAY_");
     try expectFlags(abi.Movement, "BIFROST_MOVEMENT_");
     try std.testing.expectEqual(abi.api_revision, header.BIFROST_API_REVISION);
@@ -1791,7 +1794,10 @@ const AdmissionPlugin = struct {
     var connected: std.atomic.Value(u64) = .init(0);
     var completion: std.atomic.Value(i32) = .init(999);
     var hint_status: abi.Status = .failed;
+    var account: abi.PlayerAccount = .{};
+    var account_status: abi.Status = .failed;
     var reject: bool = false;
+    var kick: ?[]const u8 = null;
     fn init(api: *const abi.Host, plugin: *abi.Plugin) callconv(.c) abi.Status {
         host = api;
         plugin.name = .of("admission");
@@ -1815,7 +1821,10 @@ const AdmissionPlugin = struct {
     fn verified(_: ?*anyopaque, event: *const abi.Event, decision: ?*abi.TransferDecision) callconv(.c) void {
         var hints: abi.LoginHints = .{};
         hint_status = host.login_hints(host.context, event.player, &hints, @sizeOf(abi.LoginHints));
+        account_status = host.player_account(host.context, event.player, &account, @sizeOf(abi.PlayerAccount));
         decision.?.action = if (reject) .cancel else .hold_login;
+        // Holding the login keeps the backend out while the queued disconnect carries the plugin's own message
+        if (kick) |message| _ = host.disconnect(host.context, event.player, .of(message), null, null);
         player.store(event.player.id, .release);
     }
 };
@@ -1863,6 +1872,15 @@ test "admission holds verified logins before the backend and resumes on the owni
     const handle: abi.Player = .{ .id = AdmissionPlugin.player.load(.acquire) };
     try std.testing.expect(handle.id != 0);
     try std.testing.expectEqual(abi.Status.ok, AdmissionPlugin.hint_status);
+    try std.testing.expectEqual(abi.Status.ok, AdmissionPlugin.account_status);
+    try std.testing.expectEqual(abi.account_playfab_created, AdmissionPlugin.account.available);
+    try std.testing.expectEqual(sample.playfab_created_s, AdmissionPlugin.account.playfab_created_s);
+    // A caller built against a shorter layout gets only the header
+    var short: abi.PlayerAccount = .{ .playfab_created_s = -1 };
+    try std.testing.expectEqual(abi.Status.ok, host.player_account(host.context, handle, &short, 8));
+    try std.testing.expectEqual(@as(u32, 8), short.struct_size);
+    try std.testing.expectEqual(@as(i64, -1), short.playfab_created_s);
+    try std.testing.expectEqual(abi.Status.invalid_argument, host.player_account(host.context, handle, &short, 4));
     try std.testing.expectEqual(@as(u32, 0), backend.logins.load(.acquire));
     try std.testing.expectEqual(abi.Status.ok, host.resume_login(host.context, handle, null, null));
     try player.awaitLoginStatus();
@@ -1891,6 +1909,32 @@ test "admission rejection never sends a login upstream" {
     try player.settings(@intCast(protocol.Current.protocol_number));
     try player.sendLogin("Steve", "2535400000000001", player.key);
     try player.awaitClosed();
+    try std.testing.expectEqual(@as(u32, 0), backend.logins.load(.acquire));
+}
+
+test "admission can refuse with its own message by holding the login and disconnecting" {
+    AdmissionPlugin.player.store(0, .release);
+    AdmissionPlugin.reject = false;
+    AdmissionPlugin.kick = "Your account is too new";
+    defer AdmissionPlugin.kick = null;
+    var plugins = try bifrost.Plugins.init(gpa, &.{}, .{});
+    defer plugins.deinit();
+    try plugins.add(AdmissionPlugin.init, null);
+    const proxy_key = try managed.proxyKey(1);
+    var keys = try managed.keySet();
+    defer keys.deinit();
+    var backend: managed.Backend = undefined;
+    try backend.start(io, proxy_key.public_key);
+    defer backend.deinit();
+    var running: fixtures.Running = undefined;
+    try running.start(io, try managed.config(&.{backend.address()}), .{ .plugins = &plugins, .proxy_key = proxy_key, .auth = .{ .verify = &keys } });
+    defer running.deinit();
+    const player = try managed.Player.connect(io, running.address(), 2);
+    defer player.destroy();
+    try player.settings(@intCast(protocol.Current.protocol_number));
+    try player.sendLogin("Steve", "2535400000000001", player.key);
+    try player.awaitClosed();
+    try std.testing.expect(AdmissionPlugin.player.load(.acquire) != 0);
     try std.testing.expectEqual(@as(u32, 0), backend.logins.load(.acquire));
 }
 

@@ -11,7 +11,7 @@ pub const max_manifest_bytes = 4096;
 pub const ManifestFn = *const fn (out: ?*Str) callconv(.c) Status;
 pub const no_backend: u32 = std.math.maxInt(u32);
 pub const no_worker: u32 = std.math.maxInt(u32);
-pub const api_revision: u32 = 8;
+pub const api_revision: u32 = 9;
 
 pub const ConnectionState = enum(u32) { connected, closing, disconnected, _ };
 pub const AuthenticationState = enum(u32) { pending, authenticated, disabled, unavailable, rejected, _ };
@@ -41,6 +41,16 @@ pub const PlayerInfo = extern struct {
     xuid: [32]u8 = @splat(0),
     uuid: [36]u8 = @splat(0),
 };
+
+/// What the verified login says about the account. Bifrost fills as much as the caller's buffer holds, and `struct_size` says how much it wrote.
+pub const PlayerAccount = extern struct {
+    struct_size: u32 = @sizeOf(PlayerAccount),
+    /// Bits of `account_*`; a field whose bit is clear is unknown, never zero
+    available: u32 = 0,
+    playfab_created_s: i64 = 0,
+};
+
+pub const account_playfab_created: u32 = 1 << 0;
 
 pub const LoginHints = extern struct {
     device_len: u32 = 0,
@@ -420,6 +430,7 @@ pub const Host = extern struct {
     revision: u32 = api_revision,
     find_player: *const fn (context: *anyopaque, name_or_xuid: Str, out: ?*Player) callconv(.c) Status,
     list_players: *const fn (context: *anyopaque, out: ?[*]Player, capacity: usize, total: ?*usize) callconv(.c) Status,
+    player_account: *const fn (context: *anyopaque, player: Player, out: ?*PlayerAccount, capacity: usize) callconv(.c) Status,
 
     pub fn has(self: *const Host, comptime field: std.meta.FieldEnum(Host)) bool {
         const name = @tagName(field);

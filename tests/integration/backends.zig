@@ -117,8 +117,6 @@ test "backend identity pin requires the listener's signing key" {
     matching.identity_key = identity.public_key;
     const connection = try transport.dial(&matching);
     defer connection.destroy();
-    const accepted = try listener.accept();
-    defer accepted.destroy();
     try std.testing.expect(connection.identity_issuer_verified);
     try std.testing.expectEqual(identity.public_key.toCompressedSec1(), connection.public_key.?.toCompressedSec1());
 }

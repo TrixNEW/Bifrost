@@ -137,6 +137,7 @@ fn probeFailure(err: anyerror) []const u8 {
         error.ConnectionRefused => "nothing is listening on its signaling port",
         error.Timeout => "its status query got no answer in time",
         error.BackendUnavailable => "it answered the status query with an error",
+        error.InvalidStatus => "its status response was incomplete or invalid",
         error.NetworkUnreachable, error.HostUnreachable => "its address is unreachable",
         error.ConnectionResetByPeer, error.EndOfStream => "it closed the status query",
         else => "its status query failed",
@@ -175,8 +176,12 @@ fn query(io: std.Io, address: std.Io.net.IpAddress) anyerror!u32 {
     if (head.status != .ok) return error.BackendUnavailable;
     var transfer: [1024]u8 = undefined;
     var body_buffer: [16 * 1024]u8 = undefined;
+    const length = if (head.transfer_encoding == .none) head.content_length else null;
+    if ((length orelse 0) > body_buffer.len) return error.InvalidStatus;
     var body = std.Io.Writer.fixed(&body_buffer);
-    _ = http.bodyReader(&transfer, head.transfer_encoding, head.content_length).streamRemaining(&body) catch return error.InvalidStatus;
+    const received = http.bodyReader(&transfer, head.transfer_encoding, length).streamRemaining(&body) catch |err|
+        return if (err == error.ReadFailed) receiver.err orelse error.InvalidStatus else error.InvalidStatus;
+    if (length) |expected| if (received != expected) return error.InvalidStatus;
     return playerCount(body.buffered());
 }
 
@@ -193,6 +198,31 @@ test "status bodies give a player count or nothing" {
     try std.testing.expectEqual(@as(u32, 7), playerCount("{\"name\":\"x\",\"players\":7,\"maxPlayers\":10}"));
     try std.testing.expectEqual(@as(u32, 0), playerCount(""));
     try std.testing.expectEqual(@as(u32, 0), playerCount("{\"players\":-1}"));
+}
+
+test "backend health rejects a truncated status response" {
+    const io = std.testing.io;
+    const Address = std.Io.net.IpAddress;
+    var listener = try (Address{ .ip4 = .loopback(0) }).listen(io, .{});
+    defer listener.deinit(io);
+    const Response = struct {
+        fn send(server: *std.Io.net.Server) !void {
+            const stream = try server.accept(io);
+            defer stream.close(io);
+            var input: [256]u8 = undefined;
+            var output: [128]u8 = undefined;
+            var reader = stream.reader(io, &input);
+            var writer = stream.writer(io, &output);
+            var http = std.http.Server.init(&reader.interface, &writer.interface);
+            _ = try http.receiveHead();
+            try writer.interface.writeAll("HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n{\"players\":7}");
+            try writer.interface.flush();
+        }
+    };
+    var task = try io.concurrent(Response.send, .{&listener});
+    defer task.cancel(io) catch {};
+    try std.testing.expectError(error.InvalidStatus, probe(io, listener.socket.address, 2_000));
+    try task.await(io);
 }
 
 test "online players sum healthy backends and saturate" {

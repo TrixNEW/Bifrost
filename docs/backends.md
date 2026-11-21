@@ -4,8 +4,7 @@ Bifrost reaches every backend over NetherNet, the same way a player does. A back
 
 1. **HTTP signaling.** `POST /v1/join/<id>` with an `application/sdp` offer on the address in `[[backend]]`,
    answered with the SDP answer, as vanilla servers do. Bifrost uses a random decimal `<id>`. `GET /v1/join`
-   should answer with the server-list JSON; its `players` field feeds the player count Bifrost shows, and any
-   2xx counts as healthy.
+   should answer HTTP 200 with the server-list JSON. Its `players` field feeds the player count Bifrost shows.
 2. **A `ReliableDataChannel`** carrying Bedrock batches without the `0xfe` header and without Minecraft's
    ServerToClientHandshake, since DTLS already encrypts the connection. The backend answers the Login with
    PlayStatus straight away. Bifrost sends nothing on the unreliable channel in managed mode and forwards it

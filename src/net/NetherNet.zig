@@ -125,7 +125,7 @@ fn verify(context: ?*anyopaque, token: []const u8) anyerror!?nethernet.sdp_ident
     };
 }
 
-// Backends see the proxy's own key, so they can pin it
+/// Backends see the proxy's own key. Keep `backend` alive until the connection is destroyed.
 pub fn dial(self: *const NetherNet, backend: *const Backend) !*Connection {
     var origin_buffer: [64]u8 = undefined;
     const origin = try std.fmt.bufPrint(&origin_buffer, "http://{f}", .{backend.address});

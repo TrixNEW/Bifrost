@@ -13,8 +13,9 @@ A player's stage is checked about once a second. Entering a new stage restarts i
 | resource packs | the client finishes the pack stack | `resource_pack_timeout_ms` | 10 min |
 | joining | the client is in game | `join_timeout_ms` | 2 min |
 
-Login includes backend dialing and the backend's own login, so a slow or retried dial counts against it. Each
-dial is also bounded by `connect_timeout_ms`, and transfers keep their own `[transfer]` phase and total timeouts.
+Login includes backend dialing and the backend's own login, so a slow or retried dial counts against it.
+`connect_timeout_ms` applies separately to gathering an offer, receiving a signaling answer, and establishing
+the connection. Transfers keep their own `[transfer]` phase and total timeouts.
 A player that runs out of time gets a "Timed out" disconnect (managed mode) and its link, backend connection and
 queues are freed. Passthrough stops reading the Bedrock session after the Login, so from then on only the
 transport notices a dead peer.
@@ -27,11 +28,11 @@ transport notices a dead peer.
 | the same, from one IP | whole proxy | `[nethernet] max_negotiations_per_ip` | 4 |
 | one HTTP signaling request | per request | fixed | 13 s, 3 s to send it, 64 KiB offer |
 | open HTTP signaling connections from one IP | whole proxy | 4, or `max_negotiations_per_ip` if higher | 4 |
-| HTTP signaling workers | whole proxy | 4 × `max_negotiations`, 64 to 512 | 128 |
+| HTTP signaling workers | whole proxy | 4 × `max_negotiations`, clamped to 64–512, with at least `max_negotiations` workers | 128 |
 | finished handshakes waiting for a worker | per worker | fixed | 64 |
 
 A handshake over these limits gets HTTP 503 before any WebRTC state is created. ICE, DTLS and SCTP must finish
-within 10 s of the answer; vanilla clients allow 15. Idle or slow sockets each hold a worker, which is why there are
+within 10 s of applying the client's offer. Idle or slow sockets each hold a worker, which is why there are
 far more workers than one address may hold connections. Players behind one NAT share the per-IP counts, IPv6 counts per /64 and loopback is exempt.
 
 Players are expected to reach the signaling port directly. Forwarding headers such as `X-Forwarded-For` are not
@@ -92,10 +93,9 @@ The backend's receive queue then fills and SCTP stops taking from it, so its own
 nothing is dropped or reordered. Plugin injections to a peer that far behind get `BUSY`. A player still that far
 behind after `slow_player_timeout_ms` (5 s) is disconnected with "Connection too slow".
 
-The other way works the same: a backend that falls 1 MiB behind stops Bifrost reading from its player. Sends
-never fail for lack of room, because reading always stops before the native send buffer could fill. A link
-waiting on one side is woken by the transport the moment that side drains to half; the once-a-second sweep only
-backs that up.
+A backend that falls 1 MiB behind also stops Bifrost reading from its player. The threshold leaves room for
+another full-size frame. The transport wakes a waiting link when its send queue drains to half, and the
+once-a-second sweep also revisits a stalled player-side queue.
 
 During a transfer, what the target sends waits until the client is in its dimension. Once that hold reaches
 `pending_bytes` the target isn't read either, so its own flow control slows it down instead of the transfer

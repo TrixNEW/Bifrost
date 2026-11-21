@@ -1,3 +1,4 @@
+const std = @import("std");
 const nethernet = @import("nethernet");
 const NetherNet = @import("NetherNet.zig");
 const Notify = @import("Notify.zig");
@@ -46,8 +47,13 @@ pub fn sendAs(self: *Peer, bytes: []const u8, reliability: nethernet.Reliability
         self.connection.close();
         return err;
     };
-    // An empty message still queues its frame header, and zero has to mean nothing is queued
-    self.buffered_bound +|= @max(bytes.len, 1);
+    self.buffered_bound +|= sendQueueBound(bytes.len, reliability);
+}
+
+fn sendQueueBound(len: usize, reliability: nethernet.Reliability) usize {
+    // Each reliable segment carries a byte of framing. The negotiated segment size is peer-specific.
+    const headers = if (reliability == .reliable) @max(1, @min(len, nethernet.framing.maximum_segments)) else 1;
+    return len +| headers;
 }
 
 /// Borrowed until the next call. Null when nothing is waiting.
@@ -96,4 +102,11 @@ pub fn drained(self: *Peer, now_ms: u64) bool {
 
 pub fn identityKey(self: *const Peer) ?NetherNet.PublicKey {
     return self.connection.public_key;
+}
+
+test "send backlog accounting covers empty and fragmented frames" {
+    try std.testing.expectEqual(@as(usize, 1), sendQueueBound(0, .reliable));
+    try std.testing.expectEqual(@as(usize, 2), sendQueueBound(1, .reliable));
+    try std.testing.expectEqual(@as(usize, 1025), sendQueueBound(1024, .unreliable));
+    try std.testing.expectEqual(1024 + nethernet.framing.maximum_segments, sendQueueBound(1024, .reliable));
 }

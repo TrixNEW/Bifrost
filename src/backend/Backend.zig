@@ -1,4 +1,5 @@
 const std = @import("std");
+const nethernet = @import("nethernet");
 const IpAddress = std.Io.net.IpAddress;
 
 const Backend = @This();
@@ -23,6 +24,7 @@ name_len: u8,
 name_storage: [max_name_len]u8,
 max_players: u32 = 0,
 draining: bool = false,
+identity_key: ?nethernet.sdp_identity.Key = null,
 
 pub const InitError = error{ InvalidPort, InvalidName };
 

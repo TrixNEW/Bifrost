@@ -12,13 +12,26 @@
 CI runs format, the suite in Debug, ReleaseSafe and ReleaseFast on Linux and Windows, and three stress passes. The
 nightly job runs a 25-round soak and the benchmarks.
 
-The players and backends in these tests are built from bedwire and nethernet-zig, the same libraries Bifrost uses.
-That proves Bifrost and its own libraries agree; it doesn't prove a vanilla client or Quark does.
+The default suite uses players and backends built with bedwire and nethernet-zig. An opt-in test also uses
+two running Quark v6 backends and fixture-signed login tokens at Bifrost's public entry point.
+
+## Quark integration
+
+Start two disposable Quark instances on reachable loopback addresses with separate data directories, identical
+resource packs, and `network.proxy-only = true`. Generate a disposable managed Bifrost key using the
+[setup guide](setup.md) and add the public key to both Quark allowlists.
+
+```sh
+zig build stress -Dtest-filter='Quark proxy-only' \
+  -Dquark-backends=127.0.0.1:19133,127.0.0.1:19134 \
+  -Dquark-proxy-key=/path/to/disposable/bifrost-proxy.key
+```
+
+The test checks direct admission, managed login, spawning, chunk-radius changes, a backend switch and reconnect.
 
 ## Real-client checks
 
-Nobody has run these yet. They need a Windows or mobile Bedrock 1.26.60 client signed in to Xbox, a Quark v6 build
-at `a2cf1f81e` or newer, and Microsoft's keys.
+These checks need a Bedrock 1.26.60 client signed in to Xbox and Microsoft's signing keys.
 
 1. Start Quark with `xbox-auth = true` on a private address, say `10.0.0.2:19133`, and note its log.
 2. Configure Bifrost as in the [setup guide](setup.md): managed sessions, `[auth] mode = "verify"`, Quark as the

@@ -89,6 +89,7 @@ pub fn create(gpa: std.mem.Allocator, io: std.Io, config: Config, options: Optio
         .ice_bind = config.iceBind(),
         .ice_servers = ice_servers[0..config.ice_server_count],
         .udp_mux = config.udp_mux,
+        .private_backend_ice = config.private_backend_ice,
     });
     errdefer self.transport.deinit();
     if (config.metrics_bind) |address| self.metrics = try address.listen(io, .{ .reuse_address = true });

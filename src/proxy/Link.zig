@@ -219,7 +219,7 @@ pub fn connect(self: *Link) (error{NoBackendAvailable} || std.Io.ConcurrentError
     self.dial_started_ns = clock.ns(self.env.io);
     const backend = self.env.router.get(id);
     routing_log.debug("{f} -> {f}, attempt {d}", .{ self.who(), backend.*, self.tried.count() });
-    self.dial_task = try self.env.io.concurrent(Dial.run, .{ &self.dial, self.env.transport, backend.address, Scheduler.linkNotify(self) });
+    self.dial_task = try self.env.io.concurrent(Dial.run, .{ &self.dial, self.env.transport, backend, Scheduler.linkNotify(self) });
 }
 
 pub fn isFinished(self: *const Link) bool {
@@ -756,7 +756,7 @@ fn startTransfer(self: *Link, requested: Backend.Id) !void {
     errdefer self.env.router.release(target);
     const epoch = self.env.next_epoch;
     epoch.* +%= 1;
-    self.transfer = try Transfer.create(self.transferHost(session), target, self.env.router.get(target).address, epoch.*, self.env.transfer);
+    self.transfer = try Transfer.create(self.transferHost(session), target, self.env.router.get(target), epoch.*, self.env.transfer);
     managed.moving = true;
     self.env.transfers.* += 1;
     self.transfer_started_ns = clock.ns(self.env.io);

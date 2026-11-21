@@ -1,6 +1,8 @@
 const std = @import("std");
 const bifrost = @import("bifrost");
+const nethernet = @import("nethernet");
 const fixtures = @import("../support/fixtures.zig");
+const net = @import("../support/net.zig");
 
 const Backend = fixtures.Backend;
 const Running = fixtures.Running;
@@ -52,6 +54,73 @@ test "players are spread round-robin across backends" {
     defer for (&players) |*player| player.deinit();
     for (&players) |*player| try player.roundTrip("\xfehello");
     for (&backends) |*backend| try std.testing.expectEqual(@as(u32, 2), backend.connects.load(.acquire));
+}
+
+test "private backend ICE dials while the public STUN server is silent" {
+    var server: Backend = undefined;
+    try server.start(io, .{});
+    defer server.deinit();
+    const backend = try bifrost.Backend.init(null, server.address());
+
+    const stun_sink = try fixtures.loopback.bind(io, .{ .mode = .dgram, .protocol = .udp });
+    defer stun_sink.close(io);
+    var buffer: [64]u8 = undefined;
+    const stun = try std.fmt.bufPrint(&buffer, "stun:127.0.0.1:{d}", .{stun_sink.address.getPort()});
+    var settings: bifrost.NetherNet.Settings = .{
+        .identity = fixtures.identity(io),
+        .ice_servers = &.{stun},
+        .connect_timeout_ms = fixtures.dead_timeout_ms,
+    };
+
+    var shared: bifrost.NetherNet = undefined;
+    try shared.init(gpa, io, settings);
+    defer shared.deinit();
+    if (shared.dial(&backend)) |connection| {
+        connection.destroy();
+        return error.ExpectedStunTimeout;
+    } else |err| try std.testing.expectEqual(error.NoAnswer, err);
+
+    settings.private_backend_ice = true;
+    settings.connect_timeout_ms = fixtures.connect_timeout_ms;
+    var private: bifrost.NetherNet = undefined;
+    try private.init(gpa, io, settings);
+    defer private.deinit();
+    try std.testing.expectEqualStrings(stun, std.mem.span(private.serverOptions().native.ice_servers[0]));
+
+    const connection = try private.dial(&backend);
+    defer connection.destroy();
+    try connection.send("private echo", .reliable);
+    const message = (try net.receive(connection, 4_000)) orelse return error.NoMessage;
+    try std.testing.expectEqualStrings("private echo", message.data);
+}
+
+test "backend identity pin requires the listener's signing key" {
+    const identity = fixtures.identity(io);
+    const listener = try nethernet.EndpointListener.listen(gpa, io, fixtures.loopback, .{
+        .connection = .{ .allow_anonymous = true, .server_identity_key = identity },
+        .maximum_negotiations = 2,
+        .maximum_http_workers = 2,
+    });
+    defer listener.destroy();
+    var transport: bifrost.NetherNet = undefined;
+    try transport.init(gpa, io, .{ .identity = fixtures.identity(io) });
+    defer transport.deinit();
+
+    var wrong = try bifrost.Backend.init(null, listener.server.socket.address);
+    wrong.identity_key = fixtures.identity(io).public_key;
+    if (transport.dial(&wrong)) |connection| {
+        connection.destroy();
+        return error.UnexpectedBackendIdentity;
+    } else |err| try std.testing.expectEqual(error.SignatureVerificationFailed, err);
+
+    var matching = try bifrost.Backend.init(null, listener.server.socket.address);
+    matching.identity_key = identity.public_key;
+    const connection = try transport.dial(&matching);
+    defer connection.destroy();
+    const accepted = try listener.accept();
+    defer accepted.destroy();
+    try std.testing.expect(connection.identity_issuer_verified);
+    try std.testing.expectEqual(identity.public_key.toCompressedSec1(), connection.public_key.?.toCompressedSec1());
 }
 
 test "the server list shows the summed players of healthy backends" {

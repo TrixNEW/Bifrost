@@ -85,6 +85,7 @@ advertise_storage: [max_advertise_addresses][max_advertise_address_len]u8 = unde
 advertise_lens: [max_advertise_addresses]u8 = undefined,
 advertise_count: usize = 0,
 udp_mux: bool = false,
+private_backend_ice: bool = false,
 max_negotiations: u32 = 32,
 max_negotiations_per_ip: u32 = 4,
 log_level: log.Level = .info,

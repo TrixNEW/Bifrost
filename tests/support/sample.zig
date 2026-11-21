@@ -65,6 +65,10 @@ pub fn transportToken(allocator: std.mem.Allocator, key: Ecdsa.KeyPair, now: i64
 }
 
 pub fn request(allocator: std.mem.Allocator, key: Ecdsa.KeyPair, client_data_signer: Ecdsa.KeyPair, name: []const u8, xuid: []const u8, now: i64) ![]u8 {
+    return requestWithClientData(allocator, key, client_data_signer, name, xuid, now, "{\"SkinId\":\"bifrost-test\",\"ServerAddress\":\"proxy\"}");
+}
+
+pub fn requestWithClientData(allocator: std.mem.Allocator, key: Ecdsa.KeyPair, client_data_signer: Ecdsa.KeyPair, name: []const u8, xuid: []const u8, now: i64, payload: []const u8) ![]u8 {
     const claims = try std.fmt.allocPrint(
         allocator,
         "{{\"iss\":\"https://authorization.franchise.minecraft-services.net/\",\"aud\":\"api://auth-minecraft-services/multiplayer\",\"exp\":{d},\"cpk\":\"{s}\",\"xname\":\"{s}\",\"xid\":\"{s}\"}}",
@@ -73,7 +77,7 @@ pub fn request(allocator: std.mem.Allocator, key: Ecdsa.KeyPair, client_data_sig
     defer allocator.free(claims);
     const token = try signRsa(allocator, "{\"alg\":\"RS256\",\"kid\":\"" ++ oidc_key.kid ++ "\"}", claims);
     defer allocator.free(token);
-    const client_data = try bedwire.auth.login.sign(allocator, client_data_signer, "{\"alg\":\"ES384\"}", "{\"SkinId\":\"bifrost-test\",\"ServerAddress\":\"proxy\"}", .{});
+    const client_data = try bedwire.auth.login.sign(allocator, client_data_signer, "{\"alg\":\"ES384\"}", payload, .{});
     defer allocator.free(client_data);
     const envelope = try std.fmt.allocPrint(allocator, "{{\"AuthenticationType\":0,\"Token\":\"{s}\"}}", .{token});
     defer allocator.free(envelope);

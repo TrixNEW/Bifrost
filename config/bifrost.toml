@@ -15,12 +15,12 @@ max_players_per_ip = 0
 identity_file = "bifrost-identity.der"
 # libdatachannel threads that run every connection's ICE, DTLS and SCTP; 0 picks one per core, up to 4
 threads = 0
-# UDP ports for player and backend connections; open them in the firewall. Unset means any port
+# UDP ports for player connections. Backend dials share them by default. Unset means any port
 # port_min = 50000
 # port_max = 51000
 # Address to gather candidates on, every interface when unset
 # ice_bind = "203.0.113.10"
-# Needed when players reach the proxy through NAT, e.g. ["stun:stun.l.google.com:19302"]
+# Optional STUN/TURN for NAT traversal, e.g. ["stun:stun.l.google.com:19302"]
 ice_servers = []
 # Public IPs players reach this machine on when it sits behind Docker, Pterodactyl or another 1:1 NAT.
 # Ports aren't rewritten, so forward the same UDP ports as port_min to port_max, or the one udp_mux port
@@ -28,6 +28,9 @@ advertise_addresses = []
 # One shared UDP socket instead of one per connection. Faster on Linux, slower on Windows, and not yet
 # tried with vanilla clients
 udp_mux = false
+# Use "private" when every backend is reachable over private networking. Dials then use local interfaces
+# and ephemeral UDP ports without inheriting the player-facing ICE bind, STUN/TURN, UDP range or mux.
+backend_ice = "shared"
 # Handshakes in flight at once, and per address so one IP can't take them all
 max_negotiations = 32
 max_negotiations_per_ip = 4
@@ -111,6 +114,8 @@ file_max_mb = 16
 # Defaults to the address. Backends speak NetherNet too, this is their HTTP signaling address
 name = "lobby"
 address = "127.0.0.1:19133"
+# The backend's base64 DER P-384 public key, used to verify its WebRTC identity.
+# identity_key = "MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAE..."
 # Players this proxy sends there at once, 0 for no limit
 max_players = 0
 # Takes no new players or transfers until "undrain lobby" on the console

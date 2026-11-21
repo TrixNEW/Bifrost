@@ -225,6 +225,8 @@ pub const Running = struct {
                 .off => null,
             },
             .connect_timeout_ms = proxy_config.connect_timeout_ms,
+            .ice_bind = proxy_config.iceBind(),
+            .private_backend_ice = proxy_config.private_backend_ice,
         });
         errdefer self.transport.deinit();
         self.proxy = try bifrost.Proxy.create(allocator, io, proxy_config, .{

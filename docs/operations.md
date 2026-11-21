@@ -8,6 +8,26 @@ without a hardware RNG may take hours after boot, so a server started with the m
 kernel's random number generator to be seeded` and stalls there. Add a virtio-rng device to the VM, or run haveged
 or rng-tools on the host.
 
+## Networking
+
+The Bedrock server list and join requests use TCP on `[server] bind`. Gameplay uses separate UDP ports selected
+by ICE. For 1:1 forwarding through Docker, Pterodactyl or a VPS firewall, set `[nethernet] port_min` and
+`port_max`, forward that same UDP range on the host, and set `advertise_addresses` to the reachable host IP.
+`ice_bind` selects an address assigned to Bifrost's process or container. An address owned by the host alone
+belongs in `advertise_addresses`. Reserve enough UDP ports for simultaneous players and handshakes when `udp_mux`
+is off. An advertised candidate uses the original UDP port and needs a reachable socket of the same IP family.
+
+Use `[nethernet] backend_ice = "private"` when all backends are on loopback, a private network or a VPN with
+routable candidate addresses. Backend dials gather local candidates on OS-assigned UDP ports. Permit outbound
+backend signaling TCP and traffic between the proxy's ephemeral UDP ports and the backends' ICE ports over
+that private network. Keep backend ports private to Bifrost. The `shared` default preserves existing backend
+dials that rely on Bifrost's configured ICE bind, STUN/TURN servers, UDP port range or mux.
+
+STUN discovers an endpoint's NAT mapping. If the NAT prevents direct UDP connectivity, use explicit forwarding
+or a reachable TURN relay. A TCP status response confirms signaling is reachable. Check the UDP route and
+candidate pairs before increasing `[limits] connect_timeout_ms`. That setting applies separately while gathering
+the offer, waiting for the signaling answer, and establishing ICE, DTLS and SCTP after the answer.
+
 ## Console
 
 Bifrost reads commands from its standard input, which is where Pterodactyl's console and `docker attach` type.

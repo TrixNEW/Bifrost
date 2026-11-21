@@ -89,7 +89,7 @@ world: Managed.Outbox,
 managed: *Managed,
 mismatch: ?content.Mismatch = null,
 
-pub fn create(host: Host, target: Backend.Id, address: std.Io.net.IpAddress, epoch: State.Epoch, settings: Settings) !*Transfer {
+pub fn create(host: Host, target: Backend.Id, backend: *const Backend, epoch: State.Epoch, settings: Settings) !*Transfer {
     const self = try host.gpa.create(Transfer);
     errdefer host.gpa.destroy(self);
     self.* = .{
@@ -109,7 +109,7 @@ pub fn create(host: Host, target: Backend.Id, address: std.Io.net.IpAddress, epo
     };
     errdefer self.world.deinit();
     errdefer self.upstream.deinit();
-    self.dial_task = try host.io.concurrent(Dial.run, .{ &self.dial, host.transport, address, host.notify });
+    self.dial_task = try host.io.concurrent(Dial.run, .{ &self.dial, host.transport, backend, host.notify });
     errdefer self.cancelTasks(host.io);
     try self.armTimer(host);
     host.stats.bump(.transfers_started, 1);
@@ -263,11 +263,11 @@ fn receive(self: *Transfer, host: Host, frame: []const u8) !void {
         switch (kind orelse continue) {
             .resource_packs_info => {
                 self.target_packs.info = try packs.infoHash(try Managed.typed(try Managed.decode(packet.bytes), .resource_packs_info));
-                try self.upstream.send(ctx, &.{try Managed.encodeTyped(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .downloading_finished = "" } } })});
+                try self.upstream.send(ctx, &.{try Managed.encodeTyped(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .downloading_finished = "downloadingfinished" } } })});
             },
             .resource_pack_stack => {
                 self.target_packs.stack = try packs.stackHash(try Managed.typed(try Managed.decode(packet.bytes), .resource_pack_stack));
-                try self.upstream.send(ctx, &.{try Managed.encodeTyped(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .resource_pack_stack_finished = "" } } })});
+                try self.upstream.send(ctx, &.{try Managed.encodeTyped(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .resource_pack_stack_finished = "resourcepackstackfinished" } } })});
                 try self.upstream.session.advance(.waiting_for_start_game);
             },
             .disconnect => return error.BackendRefused,

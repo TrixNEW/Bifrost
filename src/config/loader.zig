@@ -1,4 +1,5 @@
 const std = @import("std");
+const bedwire = @import("bedwire");
 const toml = @import("toml");
 const Backend = @import("../backend/Backend.zig");
 const Config = @import("Config.zig");
@@ -321,6 +322,11 @@ fn readNetherNet(config: *Config, section: *const toml.Table, diag: *Diagnostic)
         } else if (eql(key.name.?, "udp_mux")) {
             if (value != .boolean) return fail(diag, key, "expected true or false", .{});
             config.udp_mux = value.boolean;
+        } else if (eql(key.name.?, "backend_ice")) {
+            const mode = try string(diag, key, value);
+            if (eql(mode, "private")) {
+                config.private_backend_ice = true;
+            } else if (!eql(mode, "shared")) return fail(diag, key, "expected shared or private", .{});
         } else if (eql(key.name.?, "max_negotiations")) {
             config.max_negotiations = try integer(u32, diag, key, value, 1, 1024);
         } else if (eql(key.name.?, "max_negotiations_per_ip")) {
@@ -403,6 +409,7 @@ fn readBackend(config: *Config, section: *const toml.Table, index: usize, diag: 
     var name: ?[]const u8 = null;
     var max_players: u32 = 0;
     var draining = false;
+    var identity_key: @FieldType(Backend, "identity_key") = null;
     var it = section.iterator();
     while (it.next()) |entry| {
         const key: Key = .{ .section = "backend", .index = index, .name = entry.key_ptr.* };
@@ -411,6 +418,9 @@ fn readBackend(config: *Config, section: *const toml.Table, index: usize, diag: 
             backend = try address(diag, key, value, false);
         } else if (eql(key.name.?, "name")) {
             name = try string(diag, key, value);
+        } else if (eql(key.name.?, "identity_key")) {
+            identity_key = bedwire.crypto.spki.fromBase64(try string(diag, key, value)) catch
+                return fail(diag, key, "expected a base64 DER P-384 public key", .{});
         } else if (eql(key.name.?, "max_players")) {
             max_players = try integer(u32, diag, key, value, 0, 100_000);
         } else if (eql(key.name.?, "draining")) {
@@ -430,6 +440,7 @@ fn readBackend(config: *Config, section: *const toml.Table, index: usize, diag: 
     const added = &config.backend_storage[config.backend_count - 1];
     added.max_players = max_players;
     added.draining = draining;
+    added.identity_key = identity_key;
 }
 
 fn table(diag: *Diagnostic, key: Key, value: toml.Value) Error!*const toml.Table {
@@ -478,6 +489,7 @@ test "minimal config uses defaults" {
     try std.testing.expectEqual(defaults.bind.getPort(), config.bind.getPort());
     try std.testing.expectEqual(defaults.max_players, config.max_players);
     try std.testing.expectEqual(defaults.connect_timeout_ms, config.connect_timeout_ms);
+    try std.testing.expect(!config.private_backend_ice);
     try std.testing.expectEqualStrings(Config.default_motd, config.motd());
     try std.testing.expectEqual(@as(usize, 1), config.backends().len);
 }
@@ -514,6 +526,7 @@ test "full config reads every key" {
         \\ice_servers = ["stun:stun.example.com:3478"]
         \\advertise_addresses = ["203.0.113.7", "2001:db8::7"]
         \\udp_mux = true
+        \\backend_ice = "private"
         \\max_negotiations = 16
         \\max_negotiations_per_ip = 2
         \\
@@ -538,6 +551,7 @@ test "full config reads every key" {
     try std.testing.expectEqual(@as(usize, 2), config.advertise_count);
     try std.testing.expectEqualStrings("203.0.113.7", config.advertiseAddress(0));
     try std.testing.expect(config.udp_mux);
+    try std.testing.expect(config.private_backend_ice);
     try std.testing.expectEqual(@as(u32, 16), config.max_negotiations);
     try std.testing.expectEqual(@as(u32, 2), config.max_negotiations_per_ip);
     try std.testing.expectEqual(@as(u32, 2000), config.connect_timeout_ms);
@@ -564,6 +578,17 @@ test "metrics are off unless an address is given" {
     try std.testing.expectEqual(@as(?IpAddress, null), (try parse(std.testing.allocator, backend, &diag)).metrics_bind);
     const config = try parse(std.testing.allocator, "[server]\nmetrics = \"127.0.0.1:9100\"\n" ++ backend, &diag);
     try std.testing.expectEqual(@as(u16, 9100), config.metrics_bind.?.getPort());
+}
+
+test "backend identity keys load as P-384 pins" {
+    const gpa = std.testing.allocator;
+    const pair = try bedwire.crypto.spki.Ecdsa.KeyPair.generateDeterministic(@splat(1));
+    const key = bedwire.auth.login.encodedPublicKey(pair.public_key);
+    const source = try std.fmt.allocPrint(gpa, "[[backend]]\naddress = \"127.0.0.1:1\"\nidentity_key = \"{s}\"\n", .{&key});
+    defer gpa.free(source);
+    var diag: Diagnostic = .{};
+    const config = try parse(gpa, source, &diag);
+    try std.testing.expectEqual(pair.public_key.toCompressedSec1(), config.backends()[0].identity_key.?.toCompressedSec1());
 }
 
 test "syntax errors report a position" {
@@ -632,6 +657,7 @@ test "invalid values name the offending key" {
     try expectInvalid("[nethernet]\nadvertise_addresses = [\"203.0.113.7:19132\"]\n" ++ backend, "nethernet.advertise_addresses: expected distinct public IP addresses without a port");
     try expectInvalid("[nethernet]\nadvertise_addresses = \"203.0.113.7\"\n" ++ backend, "nethernet.advertise_addresses: expected a list of public IP addresses");
     try expectInvalid("[nethernet]\nudp_mux = 1\n" ++ backend, "nethernet.udp_mux: expected true or false");
+    try expectInvalid("[nethernet]\nbackend_ice = \"unknown\"\n" ++ backend, "nethernet.backend_ice: expected shared or private");
     try expectInvalid("[nethernet]\nmax_negotiations = 0\n" ++ backend, "nethernet.max_negotiations: must be between 1 and 1024");
     try expectInvalid("[server]\nmax_players = 2\nmax_players_per_ip = 3\n" ++ backend, "server.max_players_per_ip: can't be more than max_players");
     try expectInvalid("[server]\nmax_players = 0\n" ++ backend, "server.max_players: must be between 1 and 100000");
@@ -645,6 +671,7 @@ test "invalid values name the offending key" {
     try expectInvalid("[[backend]]\n", "backend[0].address: is required");
     try expectInvalid("[[backend]]\naddress = \"127.0.0.1:0\"\n", "backend[0].address: needs a non-zero port, got \"127.0.0.1:0\"");
     try expectInvalid("[[backend]]\naddress = \"127.0.0.1:1\"\nweight = 1\n", "backend[0].weight: unknown key");
+    try expectInvalid("[[backend]]\naddress = \"127.0.0.1:1\"\nidentity_key = \"invalid\"\n", "backend[0].identity_key: expected a base64 DER P-384 public key");
     try expectInvalid(backend ++ backend, "backend[1].address: duplicates an earlier backend");
     try expectInvalid("[[backend]]\nname = \"a b\"\naddress = \"127.0.0.1:1\"\n", "backend[0].name: must be 1 to 48 of a-z A-Z 0-9 - _ . : [ ]");
     try expectInvalid("[[backend]]\nname = 1\naddress = \"127.0.0.1:1\"\n", "backend[0].name: expected a string");

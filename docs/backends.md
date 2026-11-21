@@ -35,8 +35,10 @@ share inventories or other player data need to hand it over themselves. See
 
 ## Quark v6
 
-Quark v6 serves NetherNet from `src/network/mcpe/nethernet` using the PHP `webrtc` extension, with HTTP signaling
-on `server-port`. Framing, the missing encryption handshake and the status endpoint all match.
+Quark v6 serves NetherNet through ext-bedwire, with HTTP signaling on `network.port`. The tested pins
+use Bedrock protocol 2225 (1.26.60) and Bedwire 0.8.0 on both sides. Bifrost uses NetherNet 1.11.2
+and Quark's ext-bedwire 0.5.6 uses 1.11.1. The patch difference is a Linux listener mode fix for I/O
+runtimes such as Bifrost's, while ext-bedwire uses threaded I/O.
 
 Since Quark `acad4380b` (branch `v6.0.0`) it can trust Bifrost. Copy the key Bifrost logs at startup
 ("backends must trust proxy key ...") into `server.toml`:
@@ -47,10 +49,10 @@ trusted-proxy-keys = ["MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAE..."]
 ```
 
 - **managed** dials with the proxy key and signs the Login with it, so one key covers both. Quark takes the
-  name, UUID and XUID from the Login and counts the player as Xbox authenticated when a XUID is present. With
-  `[auth] mode = "off"` there is no XUID, so the player only gets in with `xbox-auth = false`.
+  name, UUID and XUID from the verified Login. Enable `network.proxy-only` to require managed forwarding
+  and restrict admission to the configured proxies.
 - **passthrough** dials with `[nethernet] identity_file`, and that is the key logged. Quark verifies the forwarded
-  Xbox Login as usual and only skips comparing it with the NetherNet identity.
+  Xbox Login as usual and only skips comparing it with the NetherNet identity. This requires `network.proxy-only = false`.
 
 Managed Logins also carry a signed `PlayerAddress` claim, which Quark `a2cf1f81e` and newer use as the session
 IP. Passthrough has nowhere signed to put it, so Quark sees Bifrost's address there. With `[auth] mode = "off"`
@@ -62,8 +64,8 @@ identity assertion proves the dialer holds that key. A trusted proxy can log in 
 you run. Older Quark builds have none of this: there, managed works only with `xbox-auth = false` and without
 XUIDs, and passthrough doesn't work at all.
 
-This was checked by verifying a bedwire-built proxy Login with Quark's own parsing and signature code. A full
-Bifrost-to-Quark session with a real client hasn't been run.
+The [Quark integration test](testing.md#quark-integration) uses Quark's native transport and a synthetic
+Bedrock client with fixture-signed logins.
 
 ## Other backends
 

@@ -240,6 +240,8 @@ fn addTests(ctx: Context, plugin: Plugin) void {
     const options = b.addOptions();
     options.addOption(bool, "report", b.option(bool, "transfer-report", "Print transfer stress timings and memory") orelse false);
     options.addOption(u32, "soak", b.option(u32, "soak", "Multiply the transfer stress rounds, e.g. 25 for a soak run") orelse 1);
+    options.addOption(?[]const u8, "quark_backends", b.option([]const u8, "quark-backends", "Two running proxy-only Quark test addresses, separated by a comma"));
+    options.addOption(?[]const u8, "quark_proxy_key", b.option([]const u8, "quark-proxy-key", "Path to the test proxy key trusted by both Quark backends"));
     options.addOptionPath("example_plugin", plugin.example.getEmittedBin());
     options.addOptionPath("c_plugin", plugin.c_fixture.getEmittedBin());
     options.addOptionPath("cpp_plugin", plugin.cpp_fixture.getEmittedBin());

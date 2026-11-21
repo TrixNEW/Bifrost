@@ -1,6 +1,7 @@
 const std = @import("std");
 const nethernet = @import("nethernet");
 const Keys = @import("../protocol/Keys.zig");
+const Backend = @import("../backend/Backend.zig");
 
 const NetherNet = @This();
 
@@ -26,10 +27,11 @@ pub const Settings = struct {
     ice_bind: ?[]const u8 = null,
     ice_servers: []const []const u8 = &.{},
     udp_mux: bool = false,
+    private_backend_ice: bool = false,
 };
 
 pub const max_ice_servers = 4;
-// What players get for ICE, DTLS and SCTP after the answer. Vanilla clients allow 15 s, relayed paths can be slow
+// What players get for ICE, DTLS and SCTP after applying their offer.
 pub const ice_timeout_ms = 10_000;
 // Backends check the token's age against its 60 s life, so reuse stays well under that
 const token_reuse_s = 20;
@@ -46,6 +48,7 @@ identity: KeyPair,
 dial_identity: KeyPair,
 issuer: ?*Keys,
 native: @FieldType(nethernet.ConnectionOptions, "native"),
+dial_native: @FieldType(nethernet.ConnectionOptions, "native"),
 connect_timeout_ms: u32,
 token: *Token,
 // libdatachannel reads these on every new peer, so they live as long as the transport
@@ -56,6 +59,14 @@ ice_servers: [max_ice_servers][*:0]const u8 = undefined,
 /// Keep the transport where it is afterwards, peers point into it.
 pub fn init(self: *NetherNet, gpa: std.mem.Allocator, io: std.Io, settings: Settings) !void {
     if (settings.ice_servers.len > max_ice_servers) return error.TooManyIceServers;
+    const native: @FieldType(nethernet.ConnectionOptions, "native") = .{
+        .maximum_message_size = max_message_bytes,
+        // The ring touches every page as it wraps, so this is most of a connection's resident memory
+        .queue_bytes = 512 * 1024,
+        // A reliable send never fails for space as long as callers stop at backlog_bytes
+        .maximum_buffered_send = backlog_bytes + max_message_bytes + nethernet.framing.maximum_segments,
+        .buffered_amount_low_threshold = backlog_bytes / 2,
+    };
     const token = try gpa.create(Token);
     token.* = .{};
     self.* = .{
@@ -64,21 +75,15 @@ pub fn init(self: *NetherNet, gpa: std.mem.Allocator, io: std.Io, settings: Sett
         .identity = settings.identity,
         .dial_identity = settings.dial_identity orelse settings.identity,
         .issuer = settings.issuer_keys,
-        .native = .{
-            .maximum_message_size = max_message_bytes,
-            // The ring touches every page as it wraps, so this is most of a connection's resident memory
-            .queue_bytes = 512 * 1024,
-            // A reliable send never fails for space as long as callers stop at backlog_bytes
-            .maximum_buffered_send = backlog_bytes + max_message_bytes + nethernet.framing.maximum_segments,
-            .buffered_amount_low_threshold = backlog_bytes / 2,
-            .port_range_begin = settings.port_min,
-            .port_range_end = settings.port_max,
-            .enable_ice_udp_mux = settings.udp_mux,
-        },
+        .native = native,
+        .dial_native = native,
         .connect_timeout_ms = settings.connect_timeout_ms,
         .token = token,
     };
     errdefer self.deinit();
+    self.native.port_range_begin = settings.port_min;
+    self.native.port_range_end = settings.port_max;
+    self.native.enable_ice_udp_mux = settings.udp_mux;
     if (settings.ice_bind) |address| {
         if (address.len >= self.ice_bind.len) return error.InvalidIceBind;
         @memcpy(self.ice_bind[0..address.len], address);
@@ -90,6 +95,7 @@ pub fn init(self: *NetherNet, gpa: std.mem.Allocator, io: std.Io, settings: Sett
         self.ice_servers[i] = &self.ice_urls[i];
     }
     self.native.ice_servers = self.ice_servers[0..settings.ice_servers.len];
+    if (!settings.private_backend_ice) self.dial_native = self.native;
 }
 
 pub fn deinit(self: *NetherNet) void {
@@ -120,21 +126,27 @@ fn verify(context: ?*anyopaque, token: []const u8) anyerror!?nethernet.sdp_ident
 }
 
 // Backends see the proxy's own key, so they can pin it
-pub fn dial(self: *const NetherNet, address: std.Io.net.IpAddress) !*Connection {
+pub fn dial(self: *const NetherNet, backend: *const Backend) !*Connection {
     var origin_buffer: [64]u8 = undefined;
-    const origin = try std.fmt.bufPrint(&origin_buffer, "http://{f}", .{address});
+    const origin = try std.fmt.bufPrint(&origin_buffer, "http://{f}", .{backend.address});
     const token = try self.dialToken(std.Io.Clock.real.now(self.io).toSeconds());
     defer self.gpa.free(token);
     var id: [8]u8 = undefined;
     self.io.random(&id);
     return nethernet.dialEndpoint(self.gpa, self.io, origin, std.mem.readInt(u64, &id, .little), .{
-        .native = self.native,
+        .native = self.dial_native,
         .maximum_message_size = max_message_bytes,
         .negotiation_timeout_ms = self.connect_timeout_ms,
         .connection_timeout_ms = self.connect_timeout_ms,
         .allow_anonymous = true,
         .identity = .{ .key = self.dial_identity, .token = token, .domain = "bifrost" },
+        .verify_server = if (backend.identity_key != null) .{ .context = @constCast(backend), .verify = verifyBackend } else null,
     });
+}
+
+fn verifyBackend(context: ?*anyopaque, _: []const u8) anyerror!?nethernet.sdp_identity.Key {
+    const backend: *const Backend = @ptrCast(@alignCast(context.?));
+    return backend.identity_key;
 }
 
 // One P-384 signature per dial otherwise, and dials run on several tasks at once
@@ -154,9 +166,10 @@ fn dialToken(self: *const NetherNet, now: i64) ![]u8 {
 pub fn describe(err: anyerror) []const u8 {
     return switch (err) {
         error.ConnectionRefused => "signaling refused, nothing listens on that port",
-        error.NoAnswer => "signaling got no answer in time",
+        error.NoAnswer => "ICE gathering or signaling timed out before the answer",
         error.HttpFailure, error.ServiceUnavailable, error.MissingAnswer, error.RemoteFailure, error.MalformedSignal, error.UnexpectedSignal, error.UnexpectedMessage, error.MalformedSdp, error.InvalidNetworkId => "signaling failed",
-        error.Unauthorized, error.Forbidden, error.AuthenticationFailed, error.InvalidIdentity, error.IdentityNotAllowed, error.UntrustedIssuer, error.ExpiredIdentity, error.SignatureVerificationFailed, error.UnknownSigningKey => "the backend rejected the proxy's identity",
+        error.Unauthorized, error.Forbidden => "the backend rejected the proxy's identity",
+        error.AuthenticationFailed, error.InvalidIdentity, error.IdentityNotAllowed, error.UntrustedIssuer, error.ExpiredIdentity, error.SignatureVerificationFailed, error.UnknownSigningKey => "the backend's identity could not be verified",
         error.IceConnectFailed, error.NoLocalIceCandidate => "ICE found no working UDP path, check firewalls and the UDP port range",
         error.Timeout => "ICE or DTLS timed out after signaling",
         error.ConnectionClosed, error.ConnectionResetByPeer => "closed during setup",
@@ -186,7 +199,9 @@ fn parseCandidateAddress(text: []const u8) ?std.Io.net.IpAddress {
 }
 
 test "dial failures name their stage" {
-    try std.testing.expectEqualStrings("signaling got no answer in time", describe(error.NoAnswer));
+    try std.testing.expectEqualStrings("ICE gathering or signaling timed out before the answer", describe(error.NoAnswer));
+    try std.testing.expectEqualStrings("the backend rejected the proxy's identity", describe(error.Forbidden));
+    try std.testing.expectEqualStrings("the backend's identity could not be verified", describe(error.SignatureVerificationFailed));
     try std.testing.expect(std.mem.startsWith(u8, describe(error.IceConnectFailed), "ICE"));
     try std.testing.expectEqualStrings("connection failed", describe(error.SomethingElse));
 }

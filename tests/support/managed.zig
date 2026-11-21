@@ -60,11 +60,15 @@ pub const Player = struct {
     runtime_id: u64 = 0,
 
     pub fn connect(io: std.Io, address: IpAddress, seed: u8) !*Player {
+        return connectWithLimits(io, address, seed, limits);
+    }
+
+    pub fn connectWithLimits(io: std.Io, address: IpAddress, seed: u8, player_limits: bedwire.Limits) !*Player {
         const self = try gpa.create(Player);
         errdefer gpa.destroy(self);
         const pool = try gpa.create(bedwire.BufferPool);
         errdefer gpa.destroy(pool);
-        pool.* = try .init(gpa, limits, .conservative());
+        pool.* = try .init(gpa, player_limits, .conservative());
         errdefer pool.deinit();
         const key = try proxyKey(seed);
         self.* = .{
@@ -137,7 +141,7 @@ pub const Player = struct {
 
     pub fn spawn(self: *Player) !void {
         var buffer: [64]u8 = undefined;
-        try self.send(&.{try typedPacket(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .resource_pack_stack_finished = "" } } })});
+        try self.send(&.{try typedPacket(&buffer, .{ .resource_pack_client_response = .{ .response = .{ .resource_pack_stack_finished = "resourcepackstackfinished" } } })});
         try self.session.advance(.waiting_for_start_game);
         self.runtime_id = blk: {
             var packets = try self.receive();
@@ -676,6 +680,8 @@ pub const Backend = struct {
                 try self.admit(connection);
             },
             .resource_pack_client_response => {
+                const response = (try protocol.Current.decodeBorrowed(packet.bytes, .{})).value.typed.resource_pack_client_response.response;
+                if (response != .resource_pack_stack_finished or !std.mem.eql(u8, response.resource_pack_stack_finished, "resourcepackstackfinished")) return carrier.close();
                 if (self.mode == .kick_packs) return carrier.close();
                 try session.advance(.waiting_for_start_game);
                 var start_buffer: [1024]u8 = undefined;

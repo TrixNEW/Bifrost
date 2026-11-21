@@ -17,6 +17,7 @@ test {
     _ = @import("integration/gameplay.zig");
     _ = @import("integration/limits.zig");
     _ = @import("integration/keys.zig");
+    _ = @import("integration/quark.zig");
 }
 
 test "the shipped config parses" {

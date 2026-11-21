@@ -264,7 +264,8 @@ pub fn forwardToBackend(self: *Link, message: NetherNet.Message) !void {
 
 pub fn resumeLogin(self: *Link) abi.Status {
     const managed = self.managed orelse return .unsupported;
-    if (self.session == null) return .stale_handle;
+    const session = if (self.session) |*session| session else return .stale_handle;
+    if (!session.open()) return .too_late;
     if (!self.announced or managed.identity == null or !managed.admission_pending) return .too_late;
     managed.admission_pending = false;
     if (managed.player_phase == .ready and managed.upstream.phase == .waiting_for_login) {
@@ -431,6 +432,7 @@ pub fn service(self: *Link) error{Canceled}!void {
         self.dial_task = null;
         self.adopt(result);
     };
+    if (self.session) |*session| if (self.transfer != null and !session.open()) self.endTransfer(.player_left);
     if (self.transfer) |transfer| if (self.session) |*session| switch (try transfer.service(self.transferHost(session))) {
         .running => {},
         .finished, .abandoned => self.endTransfer(null),
@@ -893,6 +895,11 @@ fn fail(self: *Link, err: anyerror) void {
 
 fn closeSession(self: *Link) void {
     if (self.session) |*session| session.closeSoon(clock.ms(self.env.io));
+    self.endTransfer(.player_left);
+    if (self.dial_task != null) {
+        self.cancelDial();
+        self.vacate();
+    }
     self.publishState();
     self.env.scheduler.schedule(self);
 }

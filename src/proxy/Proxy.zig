@@ -405,6 +405,7 @@ fn turn(self: *Proxy) void {
     };
     // Reset before checking, or we could miss a wake
     self.scheduler.wake.reset();
+    if (self.stop_requested.load(.acquire)) return;
     const busy_since = clock.ns(self.io);
     defer self.timings.turn.record(Metrics.sinceUs(self.io, busy_since));
 
@@ -503,15 +504,20 @@ fn accept(self: *Proxy, connection: *NetherNet.Connection, address: std.Io.net.I
 }
 
 fn closeAll(self: *Proxy) void {
-    {
+    var arrivals: [inbox_capacity]*NetherNet.Connection = undefined;
+    const arrived, const console_request = pending: {
         self.mailbox_mutex.lockUncancelable(self.io);
         defer self.mailbox_mutex.unlock(self.io);
-        for (self.inbox[0..self.inbox_len]) |connection| connection.destroy();
-        _ = self.players.fetchSub(@intCast(self.inbox_len), .monotonic);
+        const arrived = self.inbox_len;
+        @memcpy(arrivals[0..arrived], self.inbox[0..arrived]);
         self.inbox_len = 0;
-        if (self.console_request) |request| request.reply.finish(self.io, 0);
+        const request = self.console_request;
         self.console_request = null;
-    }
+        break :pending .{ arrived, request };
+    };
+    for (arrivals[0..arrived]) |connection| connection.destroy();
+    _ = self.players.fetchSub(@intCast(arrived), .monotonic);
+    if (console_request) |request| request.reply.finish(self.io, 0);
     while (self.links.pop()) |entry| self.retire(entry.value);
     self.scheduler.ready.store(null, .monotonic);
 }

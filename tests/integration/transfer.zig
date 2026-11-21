@@ -126,9 +126,9 @@ test "leaving or stopping the proxy mid-transfer frees the target in every phase
         defer silent.close(io);
         var rig: Rig = undefined;
         try rig.start(switch (phase) {
-            .dialing => .{ .target = silent.address, .connect_timeout_ms = 5_000 },
-            .logging_in => .{ .b = .silent_login },
-            .joining => .{ .b = .silent_stack },
+            .dialing => .{ .target = silent.address, .connect_timeout_ms = 5_000, .health = true },
+            .logging_in => .{ .b = .silent_login, .health = true },
+            .joining => .{ .b = .silent_stack, .health = true },
         });
         defer rig.deinit();
 
@@ -141,11 +141,18 @@ test "leaving or stopping the proxy mid-transfer frees the target in every phase
         if (stop_proxy) {
             rig.running.stop();
         } else {
-            rig.player.destroy();
-            rig.player = try Player.connect(io, rig.running.address(), 3);
-            try rig.waitFor(.links_closed, 1);
+            _ = rig.health.setDraining(.of(1), true);
+            rig.player.connection.close();
+            try rig.running.waitForStat(.links_closed, 1);
+            const replacement = try Player.connect(io, rig.running.address(), 3);
+            defer replacement.destroy();
+            try replacement.login("Steve", "2535400000000001");
+            try replacement.spawn();
+            try replacement.echo("reconnected");
         }
         try std.testing.expectEqual(@as(u64, 1), rig.stats().transfers_failed_before_commit);
+        try std.testing.expectEqual(@as(u64, 0), rig.stats().transfers_committed);
+        try std.testing.expectEqual(@as(u32, 0), rig.health.proxied(.of(1)));
         if (phase != .dialing) try fixtures.waitFor(io, &rig.b.disconnects, 1);
     };
 }

@@ -118,6 +118,7 @@ fn decide(self: *State, event: Event, now_ns: u64) Step {
     };
     if (event != expected) return self.decide(.target_failed, now_ns);
     const phase = next orelse return finished;
+    if (self.expired(now_ns)) return self.decide(.expired, now_ns);
     self.phase = phase;
     self.phase_deadline_ns = now_ns + ms(self.limits.phase_ms);
     return .{ .action = action };
@@ -198,6 +199,16 @@ test "each phase gets its own deadline under the overall one" {
     state = .init(1, .{ .dial_ms = 100, .phase_ms = 500, .total_ms = 200 }, 0);
     _ = state.apply(.dialed, 50 * std.time.ns_per_ms);
     try std.testing.expectEqual(@as(u64, 200 * std.time.ns_per_ms), state.nextDeadline());
+}
+
+test "late progress cannot renew an expired transfer deadline" {
+    var state = at(.dialing);
+    try std.testing.expectEqual(Step{ .action = .roll_back, .outcome = .timed_out }, state.apply(.dialed, state.nextDeadline()));
+    try std.testing.expectEqual(Phase.dialing, state.phase);
+
+    state = at(.syncing_client);
+    try std.testing.expectEqual(Step{ .action = .disconnect, .outcome = .timed_out }, state.apply(.client_synced, state.nextDeadline()));
+    try std.testing.expectEqual(Phase.syncing_client, state.phase);
 }
 
 test "random event streams never move backwards or report an outcome for the wrong side of the commit" {

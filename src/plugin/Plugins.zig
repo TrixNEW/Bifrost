@@ -309,6 +309,11 @@ pub fn load(self: *Plugins, entry: abi.InitFn, library: ?Library, manifest: ?*co
     if (self.pending_packets.items.len != 0) try self.addPacketHooks(loaded);
     for (self.pending_commands.items, names) |item, name| self.commands.putAssumeCapacityNoClobber(name, item.command);
     for (self.pending.items) |item| self.subscribers[@backingInt(item.kind)].appendAssumeCapacity(item.subscriber);
+    if (caps.admission) {
+        const subscribers = self.subscribers[@backingInt(abi.EventKind.player_authenticated)].items;
+        const added = countKind(self.pending.items, .player_authenticated);
+        std.mem.rotate(Subscriber, subscribers, subscribers.len - added);
+    }
     plugin.name = .of(meta.name());
     plugin.plugin_version = .of(meta.version());
     self.loaded.appendAssumeCapacity(loaded);
@@ -620,6 +625,46 @@ fn shutdown(loaded: *Loaded) void {
 }
 
 const testing = std.testing;
+
+test "admission callbacks run before authentication observers regardless of load order" {
+    const AdmissionOrder = struct {
+        var order: [4]u8 = undefined;
+        var count: usize = 0;
+        var ids = [_]u8{ 1, 2, 3, 4 };
+
+        fn init(comptime name: []const u8, comptime admission: bool, comptime indices: []const usize) abi.InitFn {
+            return struct {
+                fn entry(host: *const abi.Host, plugin: *abi.Plugin) callconv(.c) abi.Status {
+                    plugin.name = .of(name);
+                    plugin.plugin_version = .of("1");
+                    plugin.capabilities = .{ .events = true, .admission = admission };
+                    for (indices) |index| {
+                        const status = host.subscribe(host.context, .player_authenticated, record, &ids[index]);
+                        if (status != .ok) return status;
+                    }
+                    return .ok;
+                }
+            }.entry;
+        }
+
+        fn record(user: ?*anyopaque, _: *const abi.Event, decision: ?*abi.TransferDecision) callconv(.c) void {
+            const id: *const u8 = @ptrCast(user.?);
+            if (decision) |control| control.action = .cancel;
+            order[count] = if (decision != null) id.* else id.* + 10;
+            count += 1;
+        }
+    };
+    var plugins: Plugins = try .init(testing.allocator, &.{}, .{});
+    defer plugins.deinit();
+    try plugins.add(AdmissionOrder.init("early-observer", false, &.{0}), null);
+    try plugins.add(AdmissionOrder.init("admission-owner", true, &.{ 1, 2 }), null);
+    try plugins.add(AdmissionOrder.init("late-observer", false, &.{3}), null);
+
+    var decision: abi.TransferDecision = .{};
+    plugins.emit(&.{ .kind = .player_authenticated }, &decision);
+    try testing.expectEqualSlices(u8, &.{ 2, 3, 11, 14 }, AdmissionOrder.order[0..AdmissionOrder.count]);
+    try testing.expectEqual(abi.TransferAction.cancel, decision.action);
+}
 
 test "player actions are bounded, revalidate handles, and cancel during shutdown" {
     const Sink = struct {

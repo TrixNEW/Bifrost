@@ -397,7 +397,7 @@ fn commit(self: *Transfer, host: Host) !void {
     managed.startSync(self.handoff.?.acks(), spawn.dimension);
     managed.handoff_pending_id = self.handoff.?.pendingId();
     managed.handoff_via_pending = self.handoff.?.waitingForTarget();
-    self.armHandoff(host);
+    try self.armHandoff(host);
     managed.target_spawned = self.seen.spawned;
     managed.backend_ids = self.target_ids;
     try managed.sendOutbox(host.ends(), &outbox);
@@ -417,10 +417,15 @@ fn release(self: *Transfer, host: Host) !void {
     self.queue.clear();
 }
 
-// Give the step the client owes an answer for a deadline, unless none is open
-fn armHandoff(self: *Transfer, host: Host) void {
+// Give the step the client owes an answer for a deadline, unless none is open. A change moves the
+// wake too: a fully silent client sends nothing to pump the session, so its fallback has to be the
+// moment the timer fires, not the next packet.
+fn armHandoff(self: *Transfer, host: Host) !void {
     const managed = host.managed;
-    self.handoff_deadline_ns = if (managed.handoff_acks != 0) clock.ns(host.io) + handoff_fallback_ns else 0;
+    const next: u64 = if (managed.handoff_acks != 0) clock.ns(host.io) + handoff_fallback_ns else 0;
+    if (next == self.handoff_deadline_ns) return;
+    self.handoff_deadline_ns = next;
+    try self.armTimer(host);
 }
 
 pub fn syncClient(self: *Transfer, host: Host) !void {
@@ -442,7 +447,7 @@ pub fn syncClient(self: *Transfer, host: Host) !void {
             try managed.sendOutbox(host.ends(), &outbox);
             try self.release(host);
         }
-        self.armHandoff(host);
+        try self.armHandoff(host);
     }
     // The client's ack and the target's spawn can land in either order
     if (!self.handoff.?.arrived() or !managed.target_spawned) return;
@@ -473,7 +478,11 @@ fn armTimer(self: *Transfer, host: Host) !void {
     if (self.timer) |*timer| timer.cancel(host.io);
     self.timer = null;
     self.timer_fired.store(false, .monotonic);
-    self.timer = try host.io.concurrent(wake, .{ host.io, self.state.nextDeadline(), &self.timer_fired, host.notify });
+    // Wake at the sooner of the phase timeout and an open handoff step's fallback deadline, so a
+    // client that stops sending altogether is still moved on by the timer instead of the phase burn.
+    const phase = self.state.nextDeadline();
+    const deadline = if (self.handoff_deadline_ns != 0 and self.handoff_deadline_ns < phase) self.handoff_deadline_ns else phase;
+    self.timer = try host.io.concurrent(wake, .{ host.io, deadline, &self.timer_fired, host.notify });
 }
 
 fn wake(io: std.Io, deadline_ns: u64, fired: *std.atomic.Value(bool), notify: Notify) void {

@@ -138,12 +138,17 @@ handoff_acks: u8 = 0,
 handoff_pending_id: ?u32 = null,
 // The loading-screen id of the last backend (not handoff) change the client hasn't settled. Modern
 // clients answer it with a screen too, so normal play must count those or unacked_changes leaks up.
+// One slot is enough: backends serialize dimension changes (Quark's syncDimension holds the next one
+// until the open screen closes), so at most one of their ids is ever outstanding.
 backend_pending_id: ?u32 = null,
 // Set once a screen ack settles a handoff step, so a legacy twin (some clients send both) is ignored.
 ack_by_screen: bool = false,
 // The pending handoff id is the via detour's, not the target's. The via's fake world can never
 // finish loading, so its step also settles on the screen opening, not only its closing.
 handoff_via_pending: bool = false,
+// A step was forced at its deadline: this client answers late or not at all, so any legacy ack
+// that shows up afterwards names a step already settled and must not stand in for the next one.
+handoff_silent: bool = false,
 // Source of handoff loading-screen ids. Starts high so these never collide with the old backend's
 // own small per-session screen ids, which would let a stale ack satisfy a handoff step.
 loading_ids: u32 = 0xffff_0000,
@@ -739,7 +744,9 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame:
                     continue; // any other open screen belongs to the old side of the switch
                 },
                 .legacy => {
-                    if (self.syncing and self.ack_by_screen) continue; // the screen already settled this step
+                    // A legacy ack names no step, so once a screen settled (or a deadline forced) one,
+                    // a bare cause-14 can only be a stale or duplicate answer to a step already closed.
+                    if (self.syncing and (self.ack_by_screen or self.handoff_silent)) continue;
                     if (self.syncing and self.takeHandoffAck()) continue;
                     self.unacked_changes -|= 1;
                 },
@@ -771,6 +778,7 @@ pub fn startSync(self: *Managed, handoff_acks: u8, target_dimension: i32) void {
     self.handoff_pending_id = null;
     self.handoff_via_pending = false;
     self.ack_by_screen = false;
+    self.handoff_silent = false;
     self.client_dimension = target_dimension;
 }
 
@@ -784,6 +792,10 @@ fn takeHandoffAck(self: *Managed) bool {
     if (self.handoff_acks == 0) return false;
     self.handoff_acks -= 1;
     self.dimension_acks += 1;
+    // This legacy ack took the step the pending id was waiting for; drop the id so a screen twin
+    // of the same answer can't settle the step a second time. Stale acks keep it, they don't name it.
+    self.handoff_pending_id = null;
+    self.handoff_via_pending = false;
     return true;
 }
 
@@ -807,6 +819,7 @@ pub fn forceHandoffAck(self: *Managed) bool {
     self.dimension_acks += 1;
     self.handoff_pending_id = null;
     self.handoff_via_pending = false;
+    self.handoff_silent = true;
     return true;
 }
 

@@ -23,6 +23,11 @@ What's open as of 2.0.0-rc.16. Details live in the linked docs.
 - **Transfers count dimension acks.** A change to another dimension the old backend sent but the client hadn't
   acknowledged yet is expected to be acknowledged before the handoff's own; that matches bedwire's client and the
   protocol, but a client that skipped such an ack would stall the switch until `phase_timeout_ms`.
+- **Handoff acks and loading screens.** Handoff `ChangeDimension`s carry a proxy-allocated loading-screen id, which
+  modern clients answer by opening and closing the screen; the closing settles any step and the opening settles only
+  the via detour, whose fake world never lets a client report finishing. A client that answers nothing is moved on
+  after a few seconds per step, and legacy `PlayerAction(ChangedDimension)` acks still count. Which client builds
+  answer which way, beyond the ones tested, hasn't been mapped.
 
 ## Limits of the design
 

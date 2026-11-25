@@ -132,6 +132,21 @@ dimension_acks: u32 = 0,
 unacked_changes: u32 = 0,
 stale_acks: u32 = 0,
 handoff_acks: u8 = 0,
+// The handoff's change whose loading screen the client hasn't closed yet, by the id we sent it with.
+// Null once counted. Modern clients answer a ChangeDimension with a ServerboundLoadingScreen(end)
+// naming this id, instead of the legacy PlayerAction(changedimensionack).
+handoff_pending_id: ?u32 = null,
+// The loading-screen id of the last backend (not handoff) change the client hasn't settled. Modern
+// clients answer it with a screen too, so normal play must count those or unacked_changes leaks up.
+backend_pending_id: ?u32 = null,
+// Set once a screen ack settles a handoff step, so a legacy twin (some clients send both) is ignored.
+ack_by_screen: bool = false,
+// The pending handoff id is the via detour's, not the target's. The via's fake world can never
+// finish loading, so its step also settles on the screen opening, not only its closing.
+handoff_via_pending: bool = false,
+// Source of handoff loading-screen ids. Starts high so these never collide with the old backend's
+// own small per-session screen ids, which would let a stale ack satisfy a handoff step.
+loading_ids: u32 = 0xffff_0000,
 target_spawned: bool = false,
 client_ids: self_id.Ids = .{},
 backend_ids: self_id.Ids = .{},
@@ -465,10 +480,13 @@ fn sentToPlayer(self: *Managed, kind: ?protocol.PacketKind, packet: []const u8) 
         return;
     };
     if (kind == .change_dimension) {
-        const dimension = (try typed(decoded, .change_dimension)).dimension_id;
+        const change = try typed(decoded, .change_dimension);
         // Clients only answer a change to another dimension
-        if (dimension != self.client_dimension) self.unacked_changes +|= 1;
-        self.client_dimension = dimension;
+        if (change.dimension_id != self.client_dimension) {
+            self.unacked_changes +|= 1;
+            self.backend_pending_id = change.loading_screen_id;
+        }
+        self.client_dimension = change.dimension_id;
     }
     if (gameplay) self.gameplay.sent(self.gpa, decoded);
     if (client) self.client_state.observe(self.gpa, decoded) catch {
@@ -701,9 +719,31 @@ fn relayFromPlayer(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame:
     while (packets.next()) |packet| {
         total += 1;
         const kind = Current.packetKind(packet.id);
-        if (kind == .player_action and (self.syncing or self.unacked_changes != 0) and Handoff.isAck(try decode(packet.bytes))) {
-            if (self.syncing and self.takeHandoffAck()) continue;
-            self.unacked_changes -|= 1;
+        const acked: ?Handoff.Ack = if ((kind == .player_action or kind == .server_bound_loading_screen) and (self.syncing or self.unacked_changes != 0))
+            Handoff.isAck(try decode(packet.bytes))
+        else null;
+        if (acked) |ack| {
+            switch (ack) {
+                // Handoff acks are matched by the id we sent: only our change used it, so unlike
+                // the legacy cause there is no ambiguity with the old backend's open changes.
+                .screen => |id| if (self.handoff_pending_id != null and id == self.handoff_pending_id.? and self.takeHandoffScreenAck()) continue else if (self.syncing) continue else if (self.backend_pending_id != null and id == self.backend_pending_id.?) {
+                    self.backend_pending_id = null;
+                    self.unacked_changes -|= 1;
+                },
+                // Opening the via's screen proves the client saw the detour; its fake world may keep
+                // the close from ever arriving, and the target's real terrain follows anyway.
+                .start => |id| if (self.syncing) {
+                    if (self.handoff_via_pending and self.handoff_pending_id != null and id == self.handoff_pending_id.?) {
+                        if (self.takeHandoffScreenAck()) continue;
+                    }
+                    continue; // any other open screen belongs to the old side of the switch
+                },
+                .legacy => {
+                    if (self.syncing and self.ack_by_screen) continue; // the screen already settled this step
+                    if (self.syncing and self.takeHandoffAck()) continue;
+                    self.unacked_changes -|= 1;
+                },
+            }
         } else if (self.syncing and Handoff.staleDuringSync(kind)) continue;
         if (self.upstream.phase != .ready) {
             try self.early.push(self.gpa, packet.bytes);
@@ -728,6 +768,9 @@ pub fn startSync(self: *Managed, handoff_acks: u8, target_dimension: i32) void {
     self.stale_acks = self.unacked_changes;
     self.unacked_changes = 0;
     self.handoff_acks = handoff_acks;
+    self.handoff_pending_id = null;
+    self.handoff_via_pending = false;
+    self.ack_by_screen = false;
     self.client_dimension = target_dimension;
 }
 
@@ -742,6 +785,35 @@ fn takeHandoffAck(self: *Managed) bool {
     self.handoff_acks -= 1;
     self.dimension_acks += 1;
     return true;
+}
+
+// A screen ack already proved which step it settles by its id, so unlike the legacy one it never
+// answers the old backend's still-open changes.
+fn takeHandoffScreenAck(self: *Managed) bool {
+    if (self.handoff_acks == 0) return false;
+    self.handoff_acks -= 1;
+    self.dimension_acks += 1;
+    self.handoff_pending_id = null;
+    self.handoff_via_pending = false;
+    self.ack_by_screen = true;
+    return true;
+}
+
+// A client that answers the handoff changes not at all must still get across: the transfer counts
+// the silent step settled once its deadline passes, like a backend gives up on a stuck screen.
+pub fn forceHandoffAck(self: *Managed) bool {
+    if (self.handoff_acks == 0) return false;
+    self.handoff_acks -= 1;
+    self.dimension_acks += 1;
+    self.handoff_pending_id = null;
+    self.handoff_via_pending = false;
+    return true;
+}
+
+// Handoff loading-screen ids, kept away from the small per-session ones backends hand out
+pub fn nextLoadingId(self: *Managed) u32 {
+    self.loading_ids += 1;
+    return self.loading_ids;
 }
 
 fn relayFromBackend(self: *Managed, ends: Ends, packets: *bedwire.Packets, frame: []const u8) !void {

@@ -19,24 +19,43 @@ pub const Target = struct {
 
 pub const Progress = enum { sent_target, arrived };
 
+/// How a client answers a dimension change: modern clients close the loading screen we named with
+/// an id, older ones send the legacy PlayerAction cause. Opening the screen only says the client
+/// saw the change; a handoff's fake world may never let it report finishing.
+pub const Ack = union(enum) {
+    legacy,
+    screen: u32,
+    start: u32,
+};
+
 target: Target,
 via: ?i32,
 step: enum { via, target, arrived },
+// Modern clients answer a ChangeDimension by closing its loading screen, which names the change
+// through the id we sent. These track the id of each handoff's own changes.
+via_id: ?u32 = null,
+target_id: ?u32 = null,
 
 // Same-dimension moves detour so the client drops its old chunks
-pub fn begin(current: i32, target: Target, outbox: *Outbox) !Handoff {
+pub fn begin(current: i32, target: Target, first_id: u32, outbox: *Outbox) !Handoff {
     const via: ?i32 = if (current != target.dimension) null else if (target.dimension == nether) overworld else nether;
+    var self: Handoff = .{ .target = target, .via = via, .step = if (via == null) .target else .via };
     if (via) |dimension| {
-        try changeDimension(outbox, dimension, target.position);
+        self.via_id = first_id;
+        try changeDimension(outbox, dimension, target.position, first_id);
         try blankWorld(outbox, dimension, target.position);
-    } else try changeDimension(outbox, target.dimension, target.position);
-    return .{ .target = target, .via = via, .step = if (via == null) .target else .via };
+    } else {
+        self.target_id = first_id;
+        try changeDimension(outbox, target.dimension, target.position, first_id);
+    }
+    return self;
 }
 
-pub fn acknowledged(self: *Handoff, outbox: *Outbox) !Progress {
+pub fn acknowledged(self: *Handoff, next_id: u32, outbox: *Outbox) !Progress {
     switch (self.step) {
         .via => {
-            try changeDimension(outbox, self.target.dimension, self.target.position);
+            self.target_id = next_id;
+            try changeDimension(outbox, self.target.dimension, self.target.position, next_id);
             self.step = .target;
             return .sent_target;
         },
@@ -45,6 +64,15 @@ pub fn acknowledged(self: *Handoff, outbox: *Outbox) !Progress {
             return .arrived;
         },
     }
+}
+
+/// The id of the change the client is meant to be acknowledging right now, or null once it has arrived.
+pub fn pendingId(self: *const Handoff) ?u32 {
+    return switch (self.step) {
+        .via => self.via_id,
+        .target => self.target_id,
+        .arrived => null,
+    };
 }
 
 /// How many dimension changes the client will acknowledge before it's in the target's world.
@@ -60,8 +88,8 @@ pub fn waitingForTarget(self: *const Handoff) bool {
     return self.step == .via;
 }
 
-fn changeDimension(outbox: *Outbox, dimension: i32, position: Vec3f) !void {
-    try outbox.emit(.{ .change_dimension = .{ .dimension_id = dimension, .position = position, .respawn = false, .loading_screen_id = null } });
+fn changeDimension(outbox: *Outbox, dimension: i32, position: Vec3f, loading_screen_id: u32) !void {
+    try outbox.emit(.{ .change_dimension = .{ .dimension_id = dimension, .position = position, .respawn = false, .loading_screen_id = loading_screen_id } });
 }
 
 fn blankWorld(outbox: *Outbox, dimension: i32, position: Vec3f) !void {
@@ -103,6 +131,7 @@ pub fn staleDuringSync(kind: ?protocol.PacketKind) bool {
     return switch (kind orelse return false) {
         .player_auth_input,
         .player_action,
+        .server_bound_loading_screen,
         .move_player,
         .command_request,
         .modal_form_response,
@@ -126,9 +155,17 @@ pub fn staleDuringSync(kind: ?protocol.PacketKind) bool {
     };
 }
 
-pub fn isAck(packet: protocol.BorrowedEnvelope) bool {
-    if (packet.value != .typed or packet.value.typed != .player_action) return false;
-    return packet.value.typed.player_action.action == .changedimensionack;
+pub fn isAck(packet: protocol.BorrowedEnvelope) ?Ack {
+    if (packet.value != .typed) return null;
+    return switch (packet.value.typed) {
+        .player_action => if (packet.value.typed.player_action.action == .changedimensionack) Ack.legacy else null,
+        .server_bound_loading_screen => |screen| switch (screen.loading_screen_packet_type) {
+            .endloadingscreen => if (screen.loading_screen_id) |id| Ack{ .screen = id } else null,
+            .startloadingscreen => if (screen.loading_screen_id) |id| Ack{ .start = id } else null,
+            else => null,
+        },
+        else => null,
+    };
 }
 
 fn sent(outbox: *Outbox, kinds: []protocol.PacketKind, dimensions: []i32) !usize {
@@ -153,21 +190,24 @@ test "a move within one dimension detours through another" {
     var kinds: [8]protocol.PacketKind = undefined;
     var dimensions: [4]i32 = undefined;
 
-    var handoff = try begin(overworld, .{ .dimension = overworld, .position = .{ .x = 10, .y = 64, .z = -20 } }, &outbox);
+    var handoff = try begin(overworld, .{ .dimension = overworld, .position = .{ .x = 10, .y = 64, .z = -20 } }, 7, &outbox);
     try std.testing.expectEqual(@as(usize, 1), try sent(&outbox, &kinds, &dimensions));
     try std.testing.expectEqual(nether, dimensions[0]);
     try std.testing.expectEqual(protocol.PacketKind.network_chunk_publisher_update, kinds[1]);
     try std.testing.expectEqual(protocol.PacketKind.level_chunk, kinds[2]);
     try std.testing.expect(handoff.waitingForTarget());
+    try std.testing.expectEqual(@as(?u32, 7), handoff.pendingId());
 
-    try std.testing.expectEqual(Progress.sent_target, try handoff.acknowledged(&outbox));
+    try std.testing.expectEqual(Progress.sent_target, try handoff.acknowledged(8, &outbox));
     try std.testing.expectEqual(@as(usize, 1), try sent(&outbox, &kinds, &dimensions));
     try std.testing.expectEqual(overworld, dimensions[0]);
-    try std.testing.expectEqual(Progress.arrived, try handoff.acknowledged(&outbox));
-    try std.testing.expectEqual(Progress.arrived, try handoff.acknowledged(&outbox));
+    try std.testing.expectEqual(@as(?u32, 8), handoff.pendingId());
+    try std.testing.expectEqual(Progress.arrived, try handoff.acknowledged(9, &outbox));
+    try std.testing.expectEqual(Progress.arrived, try handoff.acknowledged(10, &outbox));
+    try std.testing.expectEqual(@as(?u32, null), handoff.pendingId());
     try std.testing.expectEqual(@as(usize, 0), outbox.count());
 
-    _ = try begin(nether, .{ .dimension = nether, .position = .{ .x = 0, .y = 0, .z = 0 } }, &outbox);
+    _ = try begin(nether, .{ .dimension = nether, .position = .{ .x = 0, .y = 0, .z = 0 } }, 1, &outbox);
     _ = try sent(&outbox, &kinds, &dimensions);
     try std.testing.expectEqual(overworld, dimensions[0]);
 }
@@ -177,17 +217,42 @@ test "a move to another dimension goes straight there" {
     defer outbox.deinit();
     var kinds: [8]protocol.PacketKind = undefined;
     var dimensions: [4]i32 = undefined;
-    var handoff = try begin(overworld, .{ .dimension = nether, .position = .{ .x = 0, .y = 70, .z = 0 } }, &outbox);
+    var handoff = try begin(overworld, .{ .dimension = nether, .position = .{ .x = 0, .y = 70, .z = 0 } }, 5, &outbox);
     try std.testing.expectEqual(@as(usize, 1), outbox.count());
     _ = try sent(&outbox, &kinds, &dimensions);
     try std.testing.expectEqual(nether, dimensions[0]);
     try std.testing.expect(!handoff.waitingForTarget());
-    try std.testing.expectEqual(Progress.arrived, try handoff.acknowledged(&outbox));
+    try std.testing.expectEqual(@as(?u32, 5), handoff.pendingId());
+    try std.testing.expectEqual(Progress.arrived, try handoff.acknowledged(6, &outbox));
+}
+
+test "handoff changes carry a loading screen id and modern clients answer it" {
+    var outbox: Outbox = .init(std.testing.allocator);
+    defer outbox.deinit();
+    var packets: [8][]const u8 = undefined;
+
+    var handoff = try begin(overworld, .{ .dimension = overworld, .position = .{ .x = 0, .y = 64, .z = 0 } }, 0xffff_0001, &outbox);
+    try std.testing.expectEqual(@as(?u32, 0xffff_0001), handoff.pendingId());
+    const change = try protocol.Current.decodeBorrowed(outbox.slices(0, &packets)[0], .{});
+    try std.testing.expectEqual(@as(?u32, 0xffff_0001), change.value.typed.change_dimension.loading_screen_id);
+    outbox.bytes.clearRetainingCapacity();
+    outbox.lengths.clearRetainingCapacity();
+
+    try outbox.emit(.{ .server_bound_loading_screen = .{ .loading_screen_packet_type = .startloadingscreen, .loading_screen_id = 0xffff_0001 } });
+    try outbox.emit(.{ .server_bound_loading_screen = .{ .loading_screen_packet_type = .endloadingscreen, .loading_screen_id = 0xffff_0001 } });
+    const answers = outbox.slices(0, &packets);
+    try std.testing.expectEqual(@as(?Ack, .{ .start = 0xffff_0001 }), isAck(try protocol.Current.decodeBorrowed(answers[0], .{})));
+    try std.testing.expectEqual(@as(?Ack, .{ .screen = 0xffff_0001 }), isAck(try protocol.Current.decodeBorrowed(answers[1], .{})));
+
+    // Opening and closing the target's screen settle the second step
+    try std.testing.expectEqual(Progress.sent_target, try handoff.acknowledged(0xffff_0002, &outbox));
+    try std.testing.expectEqual(@as(?u32, 0xffff_0002), handoff.pendingId());
+    try std.testing.expectEqual(Progress.arrived, try handoff.acknowledged(0xffff_0003, &outbox));
 }
 
 test "a hostile spawn position still gives a valid blank chunk" {
     var outbox: Outbox = .init(std.testing.allocator);
     defer outbox.deinit();
-    _ = try begin(the_end, .{ .dimension = the_end, .position = .{ .x = std.math.nan(f32), .y = std.math.inf(f32), .z = -1e30 } }, &outbox);
+    _ = try begin(the_end, .{ .dimension = the_end, .position = .{ .x = std.math.nan(f32), .y = std.math.inf(f32), .z = -1e30 } }, 3, &outbox);
     try std.testing.expectEqual(@as(usize, 3), outbox.count());
 }

@@ -25,6 +25,9 @@ const ClientState = @import("../session/ClientState.zig");
 const Transfer = @This();
 const log = @import("../log.zig").scoped(.transfer);
 
+// How long a handoff step waits for the client's answer before taking it as settled
+const handoff_fallback_ns = 5 * std.time.ns_per_s;
+
 const max_messages_per_turn = 64;
 const max_queued_packets = 256;
 const max_held_packets = max_queued_packets + Managed.limits.max_packets_per_batch;
@@ -84,6 +87,10 @@ target_spawn: ?Handoff.Target = null,
 target_ids: self_id.Ids = .{},
 target_modes: struct { player: i32, world: i32 } = .{ .player = 0, .world = 0 },
 handoff: ?Handoff = null,
+// When the current handoff step gives up on a silent client. Vanilla clients answer a change with
+// the loading screen of the id we sent, but a screen opened over the handoff's fake world may never
+// close, so waiting for the ack to the end would burn the whole phase timeout.
+handoff_deadline_ns: u64 = 0,
 // What the target's StartGame set for the world, sent on its own since that StartGame never reaches the client
 world: Managed.Outbox,
 managed: *Managed,
@@ -386,8 +393,11 @@ fn commit(self: *Transfer, host: Host) !void {
     if (Managed.Gameplay.gameMode(self.target_modes.player, self.target_modes.world)) |mode| try outbox.emit(.{ .set_player_game_type = .{ .player_game_type = @fromBackingInt(mode) } });
     const spawn = self.target_spawn.?;
     managed.gameplay.transferred(clock.ns(host.io) / std.time.ns_per_ms, spawn.dimension, spawn.position, self.target_modes.player, self.target_modes.world);
-    self.handoff = try .begin(managed.client_dimension, spawn, &outbox);
+    self.handoff = try .begin(managed.client_dimension, spawn, managed.nextLoadingId(), &outbox);
     managed.startSync(self.handoff.?.acks(), spawn.dimension);
+    managed.handoff_pending_id = self.handoff.?.pendingId();
+    managed.handoff_via_pending = self.handoff.?.waitingForTarget();
+    try self.armHandoff(host);
     managed.target_spawned = self.seen.spawned;
     managed.backend_ids = self.target_ids;
     try managed.sendOutbox(host.ends(), &outbox);
@@ -407,18 +417,37 @@ fn release(self: *Transfer, host: Host) !void {
     self.queue.clear();
 }
 
+// Give the step the client owes an answer for a deadline, unless none is open. A change moves the
+// wake too: a fully silent client sends nothing to pump the session, so its fallback has to be the
+// moment the timer fires, not the next packet.
+fn armHandoff(self: *Transfer, host: Host) !void {
+    const managed = host.managed;
+    const next: u64 = if (managed.handoff_acks != 0) clock.ns(host.io) + handoff_fallback_ns else 0;
+    if (next == self.handoff_deadline_ns) return;
+    self.handoff_deadline_ns = next;
+    try self.armTimer(host);
+}
+
 pub fn syncClient(self: *Transfer, host: Host) !void {
     const managed = host.managed;
     if (self.result != .running or self.state.phase != .syncing_client) return;
     if (self.state.expired(clock.ns(host.io))) return self.on(host, .expired);
+    // A silent client still crosses: give up on the pending step at its deadline and move along
+    if (self.handoff_deadline_ns != 0 and managed.dimension_acks == 0 and clock.ns(host.io) >= self.handoff_deadline_ns) {
+        log.debug("Transfer {d} the client didn't answer the handoff change, continuing without its ack", .{self.state.epoch});
+        _ = managed.forceHandoffAck();
+    }
     while (managed.dimension_acks != 0 and !self.handoff.?.arrived()) {
         managed.dimension_acks -= 1;
         var outbox: Managed.Outbox = .init(host.gpa);
         defer outbox.deinit();
-        if (try self.handoff.?.acknowledged(&outbox) == .sent_target) {
+        if (try self.handoff.?.acknowledged(managed.nextLoadingId(), &outbox) == .sent_target) {
+            managed.handoff_pending_id = self.handoff.?.pendingId();
+            managed.handoff_via_pending = false;
             try managed.sendOutbox(host.ends(), &outbox);
             try self.release(host);
         }
+        try self.armHandoff(host);
     }
     // The client's ack and the target's spawn can land in either order
     if (!self.handoff.?.arrived() or !managed.target_spawned) return;
@@ -449,7 +478,11 @@ fn armTimer(self: *Transfer, host: Host) !void {
     if (self.timer) |*timer| timer.cancel(host.io);
     self.timer = null;
     self.timer_fired.store(false, .monotonic);
-    self.timer = try host.io.concurrent(wake, .{ host.io, self.state.nextDeadline(), &self.timer_fired, host.notify });
+    // Wake at the sooner of the phase timeout and an open handoff step's fallback deadline, so a
+    // client that stops sending altogether is still moved on by the timer instead of the phase burn.
+    const phase = self.state.nextDeadline();
+    const deadline = if (self.handoff_deadline_ns != 0 and self.handoff_deadline_ns < phase) self.handoff_deadline_ns else phase;
+    self.timer = try host.io.concurrent(wake, .{ host.io, deadline, &self.timer_fired, host.notify });
 }
 
 fn wake(io: std.Io, deadline_ns: u64, fired: *std.atomic.Value(bool), notify: Notify) void {
